@@ -8,7 +8,7 @@
   "scripts": {
     "start": "node src/index.js",
     "migrate": "node src/cli/migrate.js",
-    "test": "node test/migrate.smoke.js && node test/extract.smoke.js && node test/verbs.smoke.js && node test/values.smoke.js && node test/propositions.smoke.js && node test/chunks.smoke.js && node test/stances.smoke.js && node test/summarize.smoke.js && node test/digest.smoke.js && node test/routes.smoke.js && node test/meta.smoke.js && node test/tables.smoke.js && node test/injection.smoke.js && node test/timeline.smoke.js"
+    "test": "node test/migrate.smoke.js && node test/extract.smoke.js && node test/verbs.smoke.js && node test/values.smoke.js && node test/attributes.smoke.js && node test/propositions.smoke.js && node test/chunks.smoke.js && node test/stances.smoke.js && node test/summarize.smoke.js && node test/digest.smoke.js && node test/routes.smoke.js && node test/meta.smoke.js && node test/tables.smoke.js && node test/injection.smoke.js && node test/timeline.smoke.js"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",

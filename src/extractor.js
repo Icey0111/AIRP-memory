@@ -150,7 +150,18 @@ export function createExtractor({ api, metaStore, getSettings, log, bus }) {
         await step(report, STEP_DEFS.attrs, async () => {
           const r = await api.extractAttributes({ chatId, text, sourceMessageIds }, opts);
           const skipped = Number(r.skipped) || 0;
-          return `新观察块 ${r.chunks?.length ?? 0} 条${skipped ? ` (跳过 ${skipped} 条不支持的实体类型)` : ''}`;
+          const chunks = Array.isArray(r.chunks) ? r.chunks : [];
+          // V8: 三种结构操作分开报 —— "又看到一次"与"值真的变了"不是一回事,
+          // 合成一个"新增 N 条"会让人以为同一条观察被记了很多遍。
+          // 操作名与标签一律取自服务端契约 (slotOperation), 前端不写这组字面量。
+          const parts = (metaStore.getEnumOptions('slotOperation') ?? [])
+            .map((o) => {
+              const n = chunks.filter((c) => c.operation === o.value).length;
+              return n ? `${o.label} ${n}` : null;
+            })
+            .filter(Boolean);
+          return `观察 ${chunks.length} 条${parts.length ? `: ${parts.join(' / ')}` : ''}`
+            + `${skipped ? ` (跳过 ${skipped} 条不支持的实体类型)` : ''}`;
         });
       }
 

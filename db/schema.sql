@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS meta (
     value TEXT NOT NULL
 );
 
-INSERT INTO meta (key, value) VALUES ('schema_version', '7')
+INSERT INTO meta (key, value) VALUES ('schema_version', '8')
 ON CONFLICT (key) DO UPDATE SET value = '7';
 
 -- ------------------------------------------------------------
@@ -398,6 +398,12 @@ CREATE TABLE IF NOT EXISTS attribute_chunks (
     valid_from_event_id INTEGER REFERENCES events (id) ON DELETE SET NULL,
     valid_to_event_id   INTEGER REFERENCES events (id) ON DELETE SET NULL,
     supersedes_chunk_id INTEGER REFERENCES attribute_chunks (id) ON DELETE SET NULL,
+
+    -- V8: 重述判定 (与立场层的 confirms 对称, 机制见 docs/verb-layer.md §16.10)
+    --   confirms             规范化后文本相同的重复观察次数; 重述**不新增行**, 只累加
+    --   supersede_similarity 该行与前驱的余弦相似度, 审计与阈值校准用 (旧数据 NULL)
+    confirms             INTEGER NOT NULL DEFAULT 0,
+    supersede_similarity REAL,
 
     -- 溯源
     chat_id           TEXT NOT NULL,

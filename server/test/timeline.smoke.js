@@ -307,7 +307,9 @@ check('述谓抽取 prompt 含来源担保条款 (叙述者断言 vs 归属内�
 check('属性抽取 prompt 含 habit 归类条款 (重复日常归行为观察)',
   CHUNK_PROMPT.includes('habit') && CHUNK_PROMPT.includes('稳定行为模式'), '');
 check('属性抽取 prompt 要求原样重复抽取 (折叠交给写入管线, 不自己合并)',
-  CHUNK_PROMPT.includes('照原样抽出来'), '');
+  CHUNK_PROMPT.includes('照原样抽出来') && CHUNK_PROMPT.includes('不要自己合并'), '');
+check('属性抽取 prompt 说清 V8 判据: 原样重复只计数、措辞变了才另存 (别让模型自己改写)',
+  CHUNK_PROMPT.includes('只累加计数、不写新行') && CHUNK_PROMPT.includes('照原样重复最有价值'), '');
 
 console.log('');
 if (failures === 0) console.log('全部通过');

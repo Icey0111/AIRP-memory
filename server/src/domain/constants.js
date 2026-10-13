@@ -467,7 +467,12 @@ export const SLOT_MODEL = {
   /** 槽位: (holder, target, dimension); 属性槽位: (entity, aspect) */
   slotDefs: [
     { kind: 'stance', label: '立场槽', key: '(持有者, 对象, 维度)', note: '值 = stance_type' },
-    { kind: 'attribute', label: '属性槽', key: '(实体, 维度)', note: '值 = 观察内容 (迁移判定待 V8)' },
+    {
+      kind: 'attribute',
+      label: '属性槽',
+      key: '(实体, 维度)',
+      note: '值 = 观察内容; 重述不新增行 (confirms+1), 措辞变了才迁移并留档相似度 (V8)',
+    },
   ],
   /** 结构操作类型 (跨端可见: 面板与注入都会提到"迁移/确认") */
   operations: [
@@ -476,6 +481,21 @@ export const SLOT_MODEL = {
     { value: 'confirm', label: '确认', description: '值没变, 只是再次被观察到 (计数 +1, 不新增行)' },
     { value: 'revoke', label: '撤销', description: '指针置空; 文本仍在, 可恢复' },
   ],
+  /**
+   * V8 重述判定: 属性槽里"同一个值被再次观察到"与"值真的变了"必须分开。
+   *
+   * 判据是**确定性的**(规范化后文本判等), 不是相似度阈值 —— 这一点是实测校准的结果:
+   * mock embedding 下"仅标点差异"=0.85、"末尾加一句"=0.81、"中间加修饰"=0.89,
+   * 与真正的一次更新落在同一区间, 阈值会卡在噪声里无法使用。
+   * 于是分工为: **规范化判等 = 是不是重述; 相似度 = 是不是同一个槽位 (建不建链)**。
+   */
+  restatement: {
+    rule: 'normalize-equal',
+    normalize: 'NFKC 归一 → 转小写 → 去掉所有空白与标点, 只留字母/数字/汉字',
+    semantics: '规范化后完全相同 => 重述 (不新增行, confirms+1); 只要措辞变了 => 更新 (写新行 + 记 supersede_similarity)',
+    whyNotThreshold: '相似度分不开"换个标点"和"改了内容", 所以只用来决定是否建立覆盖链',
+    keepDetail: '措辞变化可能带新细节, 宁可多存一行也不丢细节',
+  },
   /** 取值元素的 kind 取值域 (value_nodes.kind) */
   valueKinds: [
     { value: 'stance_type', label: '立场类型', description: '立场槽的取值域' },
@@ -494,7 +514,13 @@ export const SLOT_MODEL = {
 // ============================================================
 
 export const THRESHOLDS = {
-  /** 同实体同维度, 新观察与旧块余弦 >= 此值 => 判定为同一属性的更新, 建立 supersedes 覆盖链 */
+  /**
+   * 同实体同维度, 新观察与旧块余弦 >= 此值 => 判定为同一属性槽位的更新, 建立 supersedes 覆盖链。
+   *
+   * ⚠️ 它**不判"是否为重述"** —— 那是规范化文本判等的事 (见 SLOT_MODEL.restatement)。
+   * 两个门槛各管一段: 相似度决定"是不是同一条属性" (建不建链),
+   * 规范化判等决定"值动没动" (要不要写新行)。
+   */
   supersedeSimilarity: 0.85,
   /** 相似度度量 */
   similarityMetric: 'cosine',

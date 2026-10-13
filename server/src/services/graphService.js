@@ -227,7 +227,8 @@ export function chatPending(db, { chatId, limit = INJECTION_TABLES.limits.pendin
  *   location 走 events.location_id, item/org 走 memory_entity_refs 引用桥);
  * - 窗口内度数再加一次权 (windowWeight) —— 时间线上正在发生的热点排更前;
  * - 速写: description 优先, 为空取该实体最高 importance 的生效观察块 (链头);
- * - 复现计数 ×N = 链头的 supersedes 链深度 (L2 观察折叠的可视化, §4.3)。
+ * - 复现计数 ×N = 这条属性被观察到的**总次数** (链上 Σ(1+confirms), V8 起口径见 analyseChunks);
+ *   它同时是排序因子 (L2 观察折叠的可视化, §4.3) 与"这是稳定行为模式"的证据。
  */
 export function keyEntities(db, { chatId, limit = INJECTION_TABLES.limits.entityRows, windowIds = [] } = {}) {
   if (!chatId || limit <= 0) return [];
@@ -284,7 +285,7 @@ export function keyEntities(db, { chatId, limit = INJECTION_TABLES.limits.entity
 
   // 一次取本聊天的全部观察块 (含已被折叠的历史块: 链深需要它们), 在 JS 里按实体归拢
   const chunks = db.prepare(`
-    SELECT id, entity_type, entity_id, content, importance, supersedes_chunk_id, is_active
+    SELECT id, entity_type, entity_id, content, importance, supersedes_chunk_id, is_active, confirms
     FROM attribute_chunks
     WHERE chat_id = ?
   `).all(chatId);
@@ -323,7 +324,7 @@ export function keyEntities(db, { chatId, limit = INJECTION_TABLES.limits.entity
       const degree = total.get(r.id) ?? 0;
       const windowDegree = inWin.get(r.id) ?? 0;
       const list = chunksByEntity.get(`${type}:${r.id}`) ?? [];
-      const { head, depth, topImportance } = analyseChunks(list);
+      const { head, depth, topImportance, confirms } = analyseChunks(list);
       // 排序 = (总引用度数 + 窗口内度数) × 观察块最高 importance —— 复现频次即重要度。
       // 速写文本 (description 优先 / 链头观察) 与 ×N 标记的拼装属于排版, 交给 injectionService。
       const score = ((E.windowWeight - 1) * windowDegree + degree) * topImportance;
@@ -337,6 +338,8 @@ export function keyEntities(db, { chatId, limit = INJECTION_TABLES.limits.entity
         windowDegree,
         head,
         depth,
+        /** V8: 链头的确认次数 (措辞一字不差地重复观察了几次); depth 是它 + 迁移次数的总计 */
+        confirms,
         topImportance,
         score,
       });
@@ -353,38 +356,47 @@ export function keyEntities(db, { chatId, limit = INJECTION_TABLES.limits.entity
 }
 
 /**
- * 观察块的链头与链深。
+ * 观察块的链头与复现计数 (L2 折叠)。
+ *
  * 链头 = 没有被任何块 supersede 的块 (可以有多条, 对应不同 aspect);
- * 速写取其中 importance 最高的一条; 链深 = 从链头往下走 supersedes 的层数 (含链头)。
+ * 速写取其中 importance 最高的一条。
+ *
+ * V8 起"复现计数"的算法变了, 但**数值口径没变**:
+ *   计数 = 沿 supersedes 链 Σ(1 + confirms_i) = 这条属性被观察到的**总次数**。
+ *   - V8 之前每次观察都写一行 → Σ1 = 链上行数, 与旧口径完全一致 (旧行 confirms=0, 零漂移);
+ *   - V8 起"措辞一字不差的重复"不写行, 计数记在 confirms 上 → 仍然等于总次数;
+ *   - "值真的变了"写的新行也计入 —— 它同样是一次观察 (§16.10 的迁移)。
+ * 于是 ×N 的含义从"链有多长"变成"观察到多少次": 结构性更准, 表达力不变。
  */
 function analyseChunks(list) {
-  if (list.length === 0) return { head: null, depth: 0, topImportance: 0 };
+  if (list.length === 0) return { head: null, depth: 0, topImportance: 0, confirms: 0 };
   const supersededIds = new Set(list.filter((c) => c.supersedes_chunk_id).map((c) => c.supersedes_chunk_id));
   const byId = new Map(list.map((c) => [c.id, c]));
   const heads = list.filter((c) => c.is_active === 1 && !supersededIds.has(c.id));
-  if (heads.length === 0) return { head: null, depth: 0, topImportance: 0 };
+  if (heads.length === 0) return { head: null, depth: 0, topImportance: 0, confirms: 0 };
 
-  const depthFrom = (id) => {
+  // 复现计数 = 总观察次数 (含确认)
+  const observationsFrom = (id) => {
     let n = 0;
     let cur = byId.get(id);
     const seen = new Set();
     while (cur && !seen.has(cur.id)) {
       seen.add(cur.id);
-      n++;
+      n += 1 + (cur.confirms ?? 0);
       cur = cur.supersedes_chunk_id ? byId.get(cur.supersedes_chunk_id) : null;
     }
     return n;
   };
 
   let head = heads[0];
-  let depth = depthFrom(head.id);
+  let depth = observationsFrom(head.id);
   for (const h of heads) {
-    const d = depthFrom(h.id);
+    const d = observationsFrom(h.id);
     if (h.importance > head.importance || (h.importance === head.importance && d > depth)) {
       head = h;
       depth = d;
     }
   }
   const topImportance = Math.max(...heads.map((h) => h.importance ?? 0.5));
-  return { head, depth, topImportance: topImportance || 0.5 };
+  return { head, depth, topImportance: topImportance || 0.5, confirms: head.confirms ?? 0 };
 }

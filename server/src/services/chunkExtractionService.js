@@ -1,17 +1,16 @@
-// 三阶抽取管线: 对话文本 -> LLM 属性观察抽取 -> embedding -> supersedes 判定 -> 落库
+// 三阶抽取管线: 对话文本 -> LLM 属性观察抽取 -> embedding -> 槽位判定 -> 落库
 // 画像重归纳: 当前生效观察块 -> LLM 归纳 -> character_profiles (带溯源)
+//
+// V8: 落库走 chunkService.recordObservation —— 重述不新增行 (只 confirms+1),
+// 措辞变了才写新行并留下 supersede_similarity 供审计与校准。判定细节在 chunkService 里。
 import { findOrCreatePerson, findOrCreateLocation } from './entityService.js';
 import { parseJsonLoose } from './extractionService.js';
-import { addChunk, currentChunks } from './chunkService.js';
+import { currentChunks, recordObservation } from './chunkService.js';
 import { upsertProfileEntry } from './profileService.js';
-import { cosine, unpackVector } from './embeddingClient.js';
 import {
-  THRESHOLDS, CHUNKABLE_ENTITY_TYPES, ASPECT_SUGGESTIONS, CHUNK_DEFAULTS,
+  CHUNKABLE_ENTITY_TYPES, ASPECT_SUGGESTIONS, CHUNK_DEFAULTS,
 } from '../domain/constants.js';
 
-// 同实体同维度下, 新观察与旧块余弦 >= 阈值 => 视为"同一属性的更新", 建立覆盖链
-// 阈值口径来自 domain/constants.js (与 GET /api/meta 同源)
-const SUPERSEDE_THRESHOLD = THRESHOLDS.supersedeSimilarity;
 const CHUNKABLE = new Set(CHUNKABLE_ENTITY_TYPES);
 
 export const EXTRACT_SYSTEM = `你是角色扮演对话的属性观察抽取器。从给定对话中抽取关于人物/地点的细粒度属性观察。
@@ -32,7 +31,8 @@ export const EXTRACT_SYSTEM = `你是角色扮演对话的属性观察抽取器�
 - 反复出现的日常行为是**观察**, 不是事件: "又去小卖部"、"照例先倒杯酒"、"每次见面都先嘲讽一句"
   这类内容写成 aspect=habit 的观察 (它表达的是稳定习惯, 强于一次性事件)。
 - 同一条观察在不同时间反复出现时, 每次都照原样抽出来即可 (不要自己合并、不要加"又一次"之类的措辞):
-  写入管线会按相似度把它们折叠成一条链, 复现次数本身就是"这是稳定行为模式"的证据。
+  写入管线会做判等: **措辞一字不差**的重复观察只累加计数、不写新行 (这就是"稳定行为模式"的证据);
+  措辞变了则视为值变了, 另存一行并留下覆盖链。所以不要为了"说得不一样"而改写, 照原样重复最有价值。
 - 环境/氛围的**稳定**特征 (气味、光线、陈设) 也归 aspect=scene / atmosphere —— 它们会被归一成地点的一次速写。
 没有可抽取内容时输出 {"observations": []}`;
 
@@ -69,36 +69,25 @@ export async function extractAttributes(db, { llm, embed, chatId, text, sourceMe
   // 2) 批量 embedding
   const vecs = await embed.embed(resolved.map((o) => o.content));
 
-  // 3) supersedes 判定 + 落库 (事务)
+  // 3) 槽位判定 + 落库 (事务)
   const results = [];
   const insertAll = db.transaction(() => {
     for (let i = 0; i < resolved.length; i++) {
       const o = resolved[i];
-      // 同实体+同维度的当前生效块, 找语义最近的
-      const siblings = currentChunks(db, {
-        entityType: o.entity_type, entityId: o.entityId, aspect: o.aspect, chatId,
-      });
-      let supersedesId = null;
-      let bestSim = 0;
-      for (const s of siblings) {
-        const sv = unpackVector(s.embedding);
-        if (!sv || sv.length !== vecs[i].length) continue;
-        const sim = cosine(vecs[i], sv);
-        if (sim > bestSim) { bestSim = sim; supersedesId = s.id; }
-      }
-      const isUpdate = bestSim >= SUPERSEDE_THRESHOLD;
-      const id = addChunk(db, {
+      const r = recordObservation(db, {
         entityType: o.entity_type, entityId: o.entityId,
         aspect: o.aspect, content: o.content,
         embeddingVec: vecs[i], embeddingModel: embed.model,
-        supersedesChunkId: isUpdate ? supersedesId : null,
         sourceMessageIds, chatId, importance: o.importance ?? CHUNK_DEFAULTS.importance,
       });
       results.push({
-        id, entityType: o.entity_type, entityName: o.entityName,
-        aspect: o.aspect, content: o.content,
-        supersedes: isUpdate ? supersedesId : null,
-        similarity: Number(bestSim.toFixed(4)),
+        id: r.id, entityType: o.entity_type, entityName: o.entityName,
+        aspect: o.aspect, content: r.content,
+        // V8: 建立 / 重述(不新增行) / 迁移 三种结构操作
+        operation: r.operation,
+        confirms: r.confirms,
+        supersedes: r.supersedes,
+        similarity: r.similarity,
       });
     }
   });

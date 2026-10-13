@@ -29,3 +29,23 @@ export function clamp01(v, fallback = 0.5) {
   if (Number.isNaN(n)) return fallback;
   return Math.min(1, Math.max(0, n));
 }
+
+/**
+ * 槽位取值的规范化指纹 —— 用来判定"这是同一个值的重述" (V8, docs/verb-layer.md §16.10)。
+ *
+ * 步骤: NFKC 归一 (全角→半角, 兼容字符统一) → 转小写 → 只保留字母/数字/汉字。
+ * 于是"仅标点差异""仅空白差异""全角半角差异"都归为同一条; 措辞一变指纹就变。
+ *
+ * 为什么不用 embedding 相似度: 实测 mock embedding 下"仅标点差异"=0.85、
+ * "末尾加一句"=0.81, 与真正的更新同区间 —— 阈值分不开"换个标点"和"改了内容"。
+ * 规范化判等是确定性的: 同样输入永远同样输出, 可复现、可审计、无模型依赖。
+ *
+ * 注意它是**指纹不是文本**: 只用于判等与去重, 任何地方输出给 LLM 或用户时都用原文。
+ */
+export function normalizeSlotValue(text) {
+  if (text == null) return '';
+  return String(text)
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, '');
+}

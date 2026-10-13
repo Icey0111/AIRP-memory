@@ -130,6 +130,13 @@ export function buildMeta(db, { llm = null, embed = null, retrieval = {}, runtim
         FORGET_TABLES.map((t) => ({ value: t.value, label: t.label, hasAccess: t.hasAccess })),
         '可参与遗忘衰减与恢复的表'
       ),
+      // 槽位的结构操作 (建立 / 迁移 / 确认 / 撤销)。
+      // 抽取结果、槽位清单、面板统计都用这套标签 —— 前端据 label('slotOperation', v) 渲染,
+      // 不自己写"新建/重述"之类的字面量。
+      slotOperation: constrained(
+        SLOT_MODEL.operations.map(toOption),
+        '槽位值的结构操作; 确认 = 值没变只是再次被看到 (计数+1, 不写新行)'
+      ),
     },
 
     // ---------- 打分口径 (供前端原样展示, 不要前端重写公式) ----------

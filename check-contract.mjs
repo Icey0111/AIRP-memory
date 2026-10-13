@@ -96,9 +96,42 @@ if (reachable) {
   check('未知值原样返回而不抛错', store.label('memoryType', '__nope__') === '__nope__');
   check('forgetTable 带 hasAccess 标记',
     (store.getEnumOptions('forgetTable') ?? []).every((o) => typeof o.hasAccess === 'boolean'));
+  // V8: 槽位结构操作 (建立/迁移/确认/撤销) 是枚举 —— 属性抽取结果的分类展示与
+  // /api/slots 的标签都靠它, 前端不得自建这组中文映射
+  const opOpts = store.getEnumOptions('slotOperation');
+  check('slotOperation 枚举齐备 (create/migrate/confirm/revoke)',
+    ['create', 'migrate', 'confirm', 'revoke'].every((v) => opOpts?.some((o) => o.value === v)),
+    JSON.stringify(opOpts));
+  check('label() 能取到槽位操作的中文标签',
+    typeof store.label('slotOperation', 'confirm') === 'string'
+    && store.label('slotOperation', 'confirm') !== 'confirm',
+    `confirm -> ${store.label('slotOperation', 'confirm')}`);
   check('每个枚举项都有 label',
-    m.endpoints.length > 0 && ['memoryType', 'memoryScope', 'forgetTable', 'chunkableEntityType']
+    m.endpoints.length > 0 && ['memoryType', 'memoryScope', 'forgetTable', 'chunkableEntityType', 'slotOperation']
       .every((n) => (store.getEnumOptions(n) ?? []).every((o) => typeof o.label === 'string' && o.label.length > 0)));
+
+  // ============================================================
+  // 3b) 槽位清单 (/api/slots): 立场槽 + 属性槽并列, 重述判据随契约下发
+  // ============================================================
+  console.log('\n--- 槽位清单契约 ---');
+  const slotsRes = await fetch(`${baseUrl}/api/slots`).then((r) => r.json());
+  check('GET /api/slots 返回 ok', slotsRes.ok === true);
+  check('立场槽与属性槽都在响应里',
+    Array.isArray(slotsRes.slots) && Array.isArray(slotsRes.attributeSlots),
+    `stance=${slotsRes.slots?.length} attr=${slotsRes.attributeSlots?.length}`);
+  check('两类槽位的操作计数齐备',
+    ['create', 'migrate', 'confirm', 'revoke'].every((k) => k in (slotsRes.counts ?? {}))
+    && ['create', 'migrate', 'confirm', 'revoke'].every((k) => k in (slotsRes.attributeCounts ?? {})),
+    JSON.stringify({ s: slotsRes.counts, a: slotsRes.attributeCounts }));
+  check('重述判据随响应下发 (确定性判据, 非相似度阈值)',
+    slotsRes.restatement?.rule === 'normalize-equal'
+    && typeof slotsRes.restatement?.normalize === 'string'
+    && typeof slotsRes.restatement?.whyNotThreshold === 'string',
+    JSON.stringify(slotsRes.restatement ?? null));
+  check('属性槽条目带总观察次数与确认计数 (与注入 ×N 同口径)',
+    slotsRes.attributeSlots.every((s) => Number.isFinite(s.observations)
+      && Number.isFinite(s.confirms) && Array.isArray(s.chains)),
+    JSON.stringify(slotsRes.attributeSlots?.slice(0, 1)));
 
   // ============================================================
   // 4) 超时由服务端推算

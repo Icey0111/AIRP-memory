@@ -23,7 +23,7 @@ import {
   MEMORY_TYPES, MEMORY_SCOPES, CHUNKABLE_ENTITY_TYPES, THRESHOLDS,
   RETRIEVAL_SCORING, FORGET_SCORING, FORGET_TABLES,
   RETRIEVAL_FALLBACK_DEFAULTS, ENDPOINTS,
-  SUMMARY_POLICY, TOKEN_ESTIMATION, INJECTION_TABLES,
+  SUMMARY_POLICY, TOKEN_ESTIMATION, INJECTION_TABLES, SLOT_MODEL,
 } from '../src/domain/constants.js';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -120,7 +120,7 @@ console.log('\n--- /api/meta 基础 ---');
 const meta = (await req('/api/meta')).body;
 check('/api/meta ok', meta.ok === true && meta.service === 'tavern-memory-server');
 check('schemaVersion / latestSupported 如实上报',
-  meta.schemaVersion === getSchemaVersion(db) && meta.latestSupported === 7,
+  meta.schemaVersion === getSchemaVersion(db) && meta.latestSupported === 8,
   `${meta.schemaVersion}/${meta.latestSupported}`);
 check('runtime.version 透传', meta.version === '9.9.9', String(meta.version));
 check('limits 如实上报绑定地址与鉴权', meta.limits.auth === false && meta.limits.boundTo === '127.0.0.1:7780');
@@ -171,8 +171,15 @@ check('enums.stanceType 标记为不受约束 (自由字符串)',
 check('enums.forgetTable 与常量同源且带 hasAccess',
   eqArr(meta.enums.forgetTable.options.map((o) => o.value), FORGET_TABLES.map((t) => t.value))
   && meta.enums.forgetTable.options.find((o) => o.value === 'stances').hasAccess === false);
+// V8: 槽位结构操作 (建立/迁移/确认/撤销) 也是枚举 —— 抽取结果与槽位清单都用这套标签渲染,
+// 前端据 label('slotOperation', v) 取中文, 不自己写这组字面量
+check('enums.slotOperation 与 SLOT_MODEL.operations 同源',
+  eqArr(meta.enums.slotOperation.options.map((o) => o.value), SLOT_MODEL.operations.map((o) => o.value))
+  && meta.enums.slotOperation.options.every((o) => typeof o.label === 'string' && o.label),
+  JSON.stringify(meta.enums.slotOperation.options));
 check('每个枚举项都带 label (前端无需自建中文映射)',
   [...meta.enums.memoryType.options, ...meta.enums.forgetTable.options,
+    ...meta.enums.slotOperation.options,
     ...meta.enums.entityType.options].every((o) => typeof o.label === 'string' && o.label.length > 0));
 
 // ============================================================

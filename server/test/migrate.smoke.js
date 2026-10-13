@@ -1,15 +1,16 @@
-// 迁移链冒烟测试: 验证 V5 -> V6 的升级路径与全新引导路径产出一致的结构
+// 迁移链冒烟测试: 验证 V5 -> V8 的升级路径与全新引导路径产出一致的结构
 // 运行: node test/migrate.smoke.js
 //
 // 这个文件存在的理由 (核心命题):
 //   数据库有两个入口 —— ①旧库跑迁移链 ②全新库跑 schema.sql。
 //   两者必须产出**同一套结构**, 否则"新装用户"和"老用户升级"会活在两个世界,
 //   而这种不一致通常在很久以后才以诡异 bug 的形式暴露。
-//   本测试把两个入口的结果做逐列比对, 并钉死迁移的四项承诺:
-//     1) 旧数据零漂移 (全部自动成为 narrator 事实, 事件/边一行不少);
+//   本测试把两个入口的结果做逐列比对, 并钉死迁移的五项承诺:
+//     1) 旧数据零漂移 (全部自动成为 narrator 事实, 事件/边一行不少, 观察块新列取默认值);
 //     2) 归属命题与事实经视图分路, 不泄漏;
 //     3) event_links 的 relation 词表真的扩了 (条件/择一可用, 非法值仍被拒);
-//     4) 取值元素层已建立。
+//     4) 取值元素层已建立;
+//     5) V7/V8 的新列 (立场槽位 / 观察块 confirms) 两个入口都有。
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -58,6 +59,10 @@ function buildV5Database() {
               VALUES ('fact', '旧记忆', '', 0.5, 'chat', 'chat-old', ?, ?)`).run(ts, ts);
   db.prepare(`INSERT INTO people (name, aliases, person_type, created_at, updated_at)
               VALUES ('艾拉', '["小艾"]', 'main', ?, ?)`).run(ts, ts);
+  db.prepare(`INSERT INTO attribute_chunks
+              (entity_type, entity_id, aspect, content, chat_id, created_at, updated_at)
+              VALUES ('person', 1, 'personality', '嘴上嘲讽, 遇险却挡在前面', 'chat-old', ?, ?)`)
+    .run(ts, ts);
 
   return { db, dir };
 }
@@ -67,9 +72,13 @@ const { db: oldDb, dir: migDir } = buildV5Database();
 check('旧库引导后为 v5', getSchemaVersion(oldDb) === 5, String(getSchemaVersion(oldDb)));
 const eventsBefore = oldDb.prepare('SELECT COUNT(*) n FROM events').get().n;
 const linksBefore = oldDb.prepare('SELECT COUNT(*) n FROM event_links').get().n;
+const chunkColsBefore = oldDb.prepare('PRAGMA table_info(attribute_chunks)').all().map((c) => c.name);
+check('V8 迁移前: 观察块还没有 confirms 列', !chunkColsBefore.includes('confirms'));
+check('V8 迁移前: 观察块还没有 supersede_similarity 列',
+  !chunkColsBefore.includes('supersede_similarity'));
 
 const version = migrate(oldDb, migDir, () => {});
-check('迁移后 schema_version=7', version === 7 && getSchemaVersion(oldDb) === 7, String(version));
+check('迁移后 schema_version=8', version === 8 && getSchemaVersion(oldDb) === 8, String(version));
 check('事件一行不少 (迁移前 3)', oldDb.prepare('SELECT COUNT(*) n FROM events').get().n === eventsBefore
   && eventsBefore === 3, `before=${eventsBefore}`);
 check('因果边一行不少 (迁移前 2)', oldDb.prepare('SELECT COUNT(*) n FROM event_links').get().n === linksBefore
@@ -82,6 +91,20 @@ check('事实视图行数 = 事件总数', oldDb.prepare('SELECT COUNT(*) n FROM
 check('命题视图此时为空', oldDb.prepare('SELECT COUNT(*) n FROM v_propositions').get().n === 0);
 check('旧行 status 默认 asserted, polarity 默认 +',
   oldDb.prepare("SELECT COUNT(*) n FROM events WHERE status='asserted' AND polarity='+'").get().n === 3);
+
+console.log('\n--- V8: 观察块的零漂移 ---');
+check('旧观察块 confirms 默认 0 且 supersede_similarity 为 NULL',
+  (() => {
+    const r = oldDb.prepare('SELECT confirms, supersede_similarity FROM attribute_chunks WHERE id=1').get();
+    return r.confirms === 0 && r.supersede_similarity === null;
+  })(),
+  JSON.stringify(oldDb.prepare('SELECT confirms, supersede_similarity FROM attribute_chunks').all()));
+check('V8 新列可写回 (confirms 累加与相似度留档)',
+  (() => {
+    oldDb.prepare('UPDATE attribute_chunks SET confirms = 3, supersede_similarity = 0.6677 WHERE id = 1').run();
+    const r = oldDb.prepare('SELECT confirms, supersede_similarity FROM attribute_chunks WHERE id=1').get();
+    return r.confirms === 3 && Math.abs(r.supersede_similarity - 0.6677) < 1e-9;
+  })());
 
 console.log('\n--- 视图分路: 归属命题不泄漏进事实层 ---');
 const ts = 1700000100;
@@ -157,19 +180,27 @@ const freshDb = new Database(':memory:');
 freshDb.pragma('foreign_keys = ON');
 fs.copyFileSync(path.join(dbDir, 'schema.sql'), path.join(migDir, 'schema.sql'));
 migrate(freshDb, migDir, () => {});
-check('全新引导即为 v7', getSchemaVersion(freshDb) === 7, String(getSchemaVersion(freshDb)));
-check('全新库也带 LATEST_SCHEMA_VERSION 一致', LATEST_SCHEMA_VERSION === 7);
+check('全新引导即为 v8', getSchemaVersion(freshDb) === 8, String(getSchemaVersion(freshDb)));
+check('全新库也带 LATEST_SCHEMA_VERSION 一致', LATEST_SCHEMA_VERSION === 8);
 check('全新库同样有视图', freshDb.prepare('SELECT COUNT(*) n FROM v_facts').get().n === 0
   && freshDb.prepare('SELECT COUNT(*) n FROM v_propositions').get().n === 0);
 check('全新库同样有 value_nodes',
   freshDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='value_nodes'").get() != null);
 
 console.log('\n--- 两个入口结构等价 (本测试的核心断言) ---');
-const cols = (db) => db.prepare('PRAGMA table_info(events)').all()
+const cols = (db, table = 'events') => db.prepare(`PRAGMA table_info(${table})`).all()
   .map((c) => `${c.name}:${c.type}:${c.notnull}:${c.dflt_value ?? ''}`).sort();
 check('events 列定义逐列一致 (迁移链 vs schema.sql)',
   JSON.stringify(cols(oldDb)) === JSON.stringify(cols(freshDb)),
   `\n    迁移: ${cols(oldDb).join(' | ')}\n    新装: ${cols(freshDb).join(' | ')}`);
+check('attribute_chunks 列定义逐列一致 (V8 新列两个入口都要有)',
+  JSON.stringify(cols(oldDb, 'attribute_chunks')) === JSON.stringify(cols(freshDb, 'attribute_chunks'))
+  && cols(freshDb, 'attribute_chunks').some((c) => c.startsWith('confirms:'))
+  && cols(freshDb, 'attribute_chunks').some((c) => c.startsWith('supersede_similarity:')),
+  `\n    迁移: ${cols(oldDb, 'attribute_chunks').join(' | ')}\n    新装: ${cols(freshDb, 'attribute_chunks').join(' | ')}`);
+check('stances 列定义逐列一致 (V7 槽位列两个入口都要有)',
+  JSON.stringify(cols(oldDb, 'stances')) === JSON.stringify(cols(freshDb, 'stances')),
+  `\n    迁移: ${cols(oldDb, 'stances').join(' | ')}\n    新装: ${cols(freshDb, 'stances').join(' | ')}`);
 
 const objects = (db) => db.prepare(
   "SELECT type, name FROM sqlite_master WHERE type IN ('table','view','index') AND name NOT LIKE 'sqlite_%' ORDER BY type, name"

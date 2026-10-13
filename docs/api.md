@@ -301,11 +301,22 @@ V6 新增的两条注入口径（`meta.verbLayer` 下发）：
 ```json
 { "ok": true, "skipped": 0, "chunks": [
   { "id": 4, "entityType": "person", "entityName": "艾拉", "aspect": "personality",
-    "content": "...", "supersedes": 3, "similarity": 0.9123 }
+    "content": "...", "operation": "update", "confirms": 0, "supersedes": 3, "similarity": 0.9123 }
 ]}
 ```
 
-自动行为：实体 find-or-create 归并 → 批量 embedding → **同实体同维度相似度 ≥0.85 自动建立 supersedes 覆盖链**（防吃书）→ 事务落库。`item`/`org` 类型观察暂跳过并计入 `skipped`。
+自动行为：实体 find-or-create 归并 → 批量 embedding → **槽位判定**（V8）→ 事务落库。`item`/`org` 类型观察暂跳过并计入 `skipped`。
+
+**V8 三种结构操作**（`operation` 字段，标签见 `meta.enums.slotOperation`）：
+
+| operation | 条件 | 存储行为 |
+|---|---|---|
+| `create` | 同槽位没有语义相近的生效块 | 写一行（唯一写文本处） |
+| `confirm` | **规范化后文本完全相同**（NFKC → 小写 → 只留字母/数字/汉字；标点/空白/全半角差异都不算变） | **不新增行**，`confirms + 1`，来源楼层并入 |
+| `update` | 措辞变了，且与某生效块余弦 ≥0.85 | 写新行，`supersedes` 指向前驱，`supersede_similarity` 留档余弦 |
+
+判据是**确定性的**：相似度只决定"是不是同一条属性"（建不建链），规范化判等决定"值动没动"。
+措辞变化可能带新细节，宁可多存一行也不丢细节 —— 重述判据详见 `meta.slotModel.restatement`。
 
 ### `POST /api/profiles-derive` — 画像重归纳
 
@@ -371,9 +382,10 @@ holder 与 target 同实体 → 400。
 
 ---
 
-## 8.1 槽位与状态迁移 `GET /api/slots`（V7，只读）
+## 8.1 槽位与状态迁移 `GET /api/slots`（V7 立场 / V8 属性，只读）
 
 迁移记录**从 supersedes 链推导，不建表**：链头 = 当前指针值，沿指针回溯的相邻两行值不同即为一次迁移。
+"值动没动"的判据：立场比字符串；属性比规范化指纹（`meta.slotModel.restatement.normalize`）。
 
 ```json
 { "ok": true,
@@ -384,15 +396,33 @@ holder 与 target 同实体 → 400。
                  { "operation": "confirm", "value": "戒备", "at": 1700000100, "count": 1 },
                  { "operation": "migrate", "from": "戒备", "value": "信任", "at": 1700000200 } ],
                "legacyCoexist": [] } ],
+  "attributeSlots": [ { "key": "person:1@habit", "kind": "attribute",
+               "entityType": "person", "entityId": 1, "entityName": "艾拉", "aspect": "habit",
+               "value": "每次进门都先嘲讽一句", "confirms": 2, "observations": 5,
+               "chains": [ { "chunkId": 9, "content": "...", "importance": 0.7,
+                             "confirms": 2, "observations": 5, "supersedeSimilarity": 0.9037,
+                             "transitions": [ { "operation": "create", "value": "...", "at": 0 },
+                                              { "operation": "confirm", "count": 2, "at": 0 },
+                                              { "operation": "migrate", "from": "...", "value": "...", "at": 0 } ] } ] } ],
   "transitions": [ { "operation": "migrate", "from": "戒备", "value": "信任", "at": 1700000200 } ],
+  "attributeTransitions": [ { "operation": "migrate", "from": "...", "value": "...", "slotKey": "person:1@habit" } ],
   "counts": { "create": 1, "migrate": 1, "confirm": 1, "revoke": 0 },
+  "attributeCounts": { "create": 1, "migrate": 2, "confirm": 2, "revoke": 0 },
   "labels": { "create": "建立", "migrate": "迁移", "confirm": "确认", "revoke": "撤销" },
-  "slotDefs": [ { "kind": "stance", "label": "立场槽", "key": "(持有者, 对象, 维度)" } ] }
+  "slotDefs": [ { "kind": "stance", "label": "立场槽", "key": "(持有者, 对象, 维度)" },
+                { "kind": "attribute", "label": "属性槽", "key": "(实体, 维度)" } ],
+  "restatement": { "rule": "normalize-equal", "normalize": "...", "semantics": "...",
+                   "whyNotThreshold": "...", "keepDetail": "..." } }
 ```
 
 - `legacyCoexist`：V6 及以前遗留的同槽位并存行（旧规则允许不同 `stance_type` 并存），**只标注不改数据**。
-- **撤销（软删）不做自动回退**：撤销迁移行后该槽位即"没有当前值"，前驱不会复活。
-- 同一份口径也出现在注入里：【关系立场】表的「立场」列显示 `戒备 → 信任`（`meta.injectionTables.stanceDisplay`）。
+- **属性槽可多元并存**（V8）：相似度不足就不进同一条链 —— 同一 `(实体, 维度)` 槽位下多条 `chains` 是
+  正常的多元观察，不是遗留数据；槽位的 `value`/`confirms` 取 importance 最高的那条链头。
+- **`observations` 与注入 ×N 同口径**：链上 Σ(1 + confirms) = 这条属性被观察到的总次数
+  （旧行 confirms=0 时恰好等于旧链深，零漂移）。
+- **撤销（软删）不做自动回退**：撤销迁移行后该槽位即"没有当前值"，前驱不会复活（被覆盖集合从全表算）。
+- 同一份口径也出现在注入里：【关系立场】表的「立场」列显示 `戒备 → 信任`（`meta.injectionTables.stanceDisplay`）；
+  关键实体表的 ×N = 总观察次数。
 
 ---
 
@@ -547,6 +577,7 @@ curl http://127.0.0.1:7780/api/meta
 | `aspect` | 否 | 结构为 `byEntityType: { person: [...], location: [...] }`，非 options |
 | `stanceType` | 否 | 常见立场类型，抽取器按语义自由生成 |
 | `forgetTable` | 是 | 每项带 `hasAccess`，标明该表是否有访问追踪 |
+| `slotOperation` | 是 | 槽位值的结构操作 create / migrate / confirm / revoke（V8）；抽取结果分类与 `/api/slots` 都用这套标签 |
 
 ### 12.4 endpoints
 
