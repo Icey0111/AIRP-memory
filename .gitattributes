@@ -1,0 +1,11 @@
+# 仓库内存 LF，避免跨平台克隆产生无谓 diff
+* text=auto eol=lf
+
+# 二进制
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.ico binary
+*.sqlite binary
+*.db binary

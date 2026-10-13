@@ -1,0 +1,23 @@
+# 依赖
+node_modules/
+
+# 运行时数据（本地库文件，不入库）
+server/data/
+data/
+
+# 本地私有配置（含 API Key）
+config.json
+server/config.json
+
+# 日志
+*.log
+npm-debug.log*
+
+# 本地 AI 工作记忆（仅本机使用，如要随仓库走请删掉这一行）
+.workbuddy/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

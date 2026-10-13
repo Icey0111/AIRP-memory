@@ -1,0 +1,38 @@
+{
+  "server": {
+    "host": "127.0.0.1",
+    "port": 7780,
+    "cors": {
+      "enabled": true,
+      "origins": []
+    }
+  },
+  "db": {
+    "path": "./data/memory.db",
+    "schemaDir": "../db"
+  },
+  "llm": {
+    "provider": "openai-compatible",
+    "baseUrl": "",
+    "apiKey": "",
+    "model": "",
+    "timeoutMs": 60000,
+    "maxTokens": 2048,
+    "temperature": 0.3
+  },
+  "embedding": {
+    "provider": "openai-compatible",
+    "baseUrl": "",
+    "apiKey": "",
+    "model": "",
+    "batchSize": 32,
+    "timeoutMs": 60000
+  },
+  "retrieval": {
+    "topK": 8,
+    "tokenBudget": 1200
+  },
+  "log": {
+    "level": "info"
+  }
+}

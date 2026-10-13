@@ -1,0 +1,17 @@
+{
+  "name": "tavern-memory-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "酒馆 AIRP 记忆系统 - 本地后端服务",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "migrate": "node src/cli/migrate.js",
+    "test": "node test/extract.smoke.js && node test/chunks.smoke.js && node test/stances.smoke.js && node test/routes.smoke.js && node test/meta.smoke.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "express": "^4.21.2"
+  }
+}
