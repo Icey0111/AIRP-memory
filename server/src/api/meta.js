@@ -13,7 +13,7 @@ import {
   ASPECT_SUGGESTIONS, STANCE_TYPE_SUGGESTIONS,
   CHUNK_DEFAULTS, STANCE_DEFAULTS,
   RETRIEVAL_SCORING, RETRIEVAL_FALLBACK_DEFAULTS, TOKEN_ESTIMATION, CONTEXT_SECTIONS, DIGEST_FORMAT,
-  INJECTION_TABLES, VERB_LAYER,
+  INJECTION_TABLES, VERB_LAYER, SLOT_MODEL,
   THRESHOLDS, SUMMARY_POLICY, FORGET_SCORING, FORGET_TABLES,
   RULES, ENDPOINTS,
 } from '../domain/constants.js';
@@ -149,6 +149,8 @@ export function buildMeta(db, { llm = null, embed = null, retrieval = {}, runtim
     // 动词层与命题层: 题元角色/动词建议值/三轴取值/嵌套角色/边词表/对齐口径
     // (前端做下拉与展示用; 事实层与命题层的分路由服务端视图保证, 前端不判断)
     verbLayer: VERB_LAYER,
+    // 槽位模型 (V7): 三种结构操作 / 槽位定义 / 取值域 —— 面板展示"迁移/确认"用
+    slotModel: SLOT_MODEL,
     // 前情提要段的文本形状: 前端展示用 (不解析), 与后端组装同源
     digestFormat: DIGEST_FORMAT,
 

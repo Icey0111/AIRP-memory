@@ -14,6 +14,7 @@ import { extractInstances } from '../services/extractionService.js';
 import { addChunk, listChunks, softDeleteChunk, stripEmbedding } from '../services/chunkService.js';
 import { extractAttributes, deriveProfile } from '../services/chunkExtractionService.js';
 import { addStance, listStances, softDeleteStance, stanceOverview } from '../services/stanceService.js';
+import { slotSummary } from '../services/slotService.js';
 import { extractStances } from '../services/stanceExtractionService.js';
 import { summarizeConversation } from '../services/summaryService.js';
 import { runForgetTask, restoreForgotten } from '../services/forgetService.js';
@@ -353,6 +354,11 @@ export function createRouter(db, { llm = null, embed = null, retrieval = {}, run
       ? stanceOverview(db, opts)
       : listStances(db, opts);
     res.json({ ok: true, stances });
+  }));
+
+  // 槽位与状态迁移 (V7): 当前指针值 + 从 supersedes 链推导的迁移序列
+  router.get('/api/slots', handle((req, res) => {
+    res.json({ ok: true, ...slotSummary(db, { chatId: req.query.chatId ?? null }) });
   }));
 
   // 软删除

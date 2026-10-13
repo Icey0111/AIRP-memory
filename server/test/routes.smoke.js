@@ -85,7 +85,7 @@ check('GET /health 契约', health.status === 200
   && health.body.ok === true && health.body.service === 'tavern-memory-server');
 
 const status = await req('GET', '/api/status');
-check('GET /api/status 版本正确', status.body.schemaVersion === 6 && status.body.latestSupported === 6);
+check('GET /api/status 版本正确', status.body.schemaVersion === 7 && status.body.latestSupported === 7);
 check('GET /api/status 计数反映种子数据', status.body.counts.memories === 5,
   `memories=${status.body.counts.memories}`);
 

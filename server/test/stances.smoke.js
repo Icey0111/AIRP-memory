@@ -8,8 +8,9 @@ import { createLlmClient } from '../src/services/llmClient.js';
 import { findOrCreatePerson, findOrCreateOrg } from '../src/services/entityService.js';
 import {
   addStance, currentStances, findCurrentStance, listStances,
-  softDeleteStance, stanceOverview,
+  softDeleteStance, stanceOverview, evolutionOf,
 } from '../src/services/stanceService.js';
+import { stanceSlots, stanceTransitions } from '../src/services/slotService.js';
 import { extractStances } from '../src/services/stanceExtractionService.js';
 import { scanForgetCandidates, runForgetTask, restoreForgotten } from '../src/services/forgetService.js';
 import { createMemory } from '../src/services/memoryService.js';
@@ -58,36 +59,67 @@ const s1 = addStance(db, {
 });
 check('写入返回 id', s1 === 1);
 
-// 演化: 戒备 -> 戒备加深 (同类型覆盖)
+// V7 槽位规则: 值没变 -> 确认 (不新增行, 只更新幅度 + confirms+1)
 const s2 = addStance(db, {
   holderType: 'person', holderId: ella.id, targetType: 'person', targetId: hero.id,
   stanceType: '戒备', intensity: 0.4, basis: '同行后渐生信任, 戒备减轻',
-  supersedesStanceId: s1, chatId: 'chat001', importance: 0.7,
+  chatId: 'chat001', importance: 0.7,
 });
+check('同值再观察 -> 复用同一行 (不新增文本)', s2 === s1, `s1=${s1} s2=${s2}`);
+check('确认计数累加且幅度更新',
+  db.prepare('SELECT confirms, intensity FROM stances WHERE id = ?').get(s1).confirms === 1
+  && db.prepare('SELECT intensity FROM stances WHERE id = ?').get(s1).intensity === 0.4);
 const cur = currentStances(db, { holderType: 'person', holderId: ella.id });
-check('被覆盖立场退出当前生效', cur.length === 1 && cur[0].id === s2, JSON.stringify(cur.map((s) => s.id)));
-check('findCurrentStance 命中新立场', findCurrentStance(db, {
-  holderType: 'person', holderId: ella.id, targetType: 'person', targetId: hero.id,
-  stanceType: '戒备', chatId: 'chat001',
-})?.id === s2);
+check('槽位只有一个当前值', cur.length === 1 && cur[0].id === s1, JSON.stringify(cur.map((s) => s.id)));
+check('findCurrentStance 按槽位命中 (不再按类型)',
+  findCurrentStance(db, {
+    holderType: 'person', holderId: ella.id, targetType: 'person', targetId: hero.id,
+    chatId: 'chat001',
+  })?.id === s1);
 
-// 不同类型并存
-addStance(db, {
+// V7 槽位规则: 值变了 -> 迁移 (指针移动, 写一行短记录并指向前驱)
+const s3 = addStance(db, {
   holderType: 'person', holderId: ella.id, targetType: 'person', targetId: hero.id,
   stanceType: '信任', intensity: 0.5, basis: '认可其剑术', chatId: 'chat001',
 });
-check('不同 stance_type 并存', currentStances(db, { holderType: 'person', holderId: ella.id }).length === 2);
+check('值变化 -> 迁移: 新行指向前驱',
+  s3 !== s1 && db.prepare('SELECT supersedes_stance_id FROM stances WHERE id = ?').get(s3).supersedes_stance_id === s1,
+  `s3=${s3}`);
+check('槽位当前值已挪到新值', currentStances(db, {
+  holderType: 'person', holderId: ella.id, targetType: 'person', targetId: hero.id, chatId: 'chat001',
+})[0].stance_type === '信任');
+check('演化链由 supersedes 推导 (戒备 → 信任)', evolutionOf(db, s3) === '戒备 → 信任', String(evolutionOf(db, s3)));
+
+// 并存: 用不同维度声明 (同维度的值变化是迁移, 不是并存)
+addStance(db, {
+  holderType: 'person', holderId: ella.id, targetType: 'person', targetId: hero.id,
+  stanceType: '戒备', intensity: 0.4, basis: '信任其剑术, 但戒备其动机', dimension: '动机',
+  chatId: 'chat001',
+});
+check('不同维度的态度面可并存', currentStances(db, { holderType: 'person', holderId: ella.id }).length === 2);
 
 // 历史口径
 const hist = listStances(db, { holderType: 'person', holderId: ella.id, includeHistory: true });
-check('历史口径含被覆盖立场', hist.length === 3);
+check('历史口径含被迁移掉的旧值 (3 行)', hist.length === 3, String(hist.length));
+
+// 槽位清单: 指针值 + 迁移序列 + 确认次数
+const slots = stanceSlots(db, { chatId: 'chat001' });
+const totalSlot = slots.find((s) => s.dimension === '总体');
+check('槽位清单给出当前指针值与迁移序列',
+  totalSlot.value === '信任'
+  && totalSlot.transitions.some((t) => t.operation === 'create')
+  && totalSlot.transitions.some((t) => t.operation === 'confirm')
+  && totalSlot.transitions.some((t) => t.operation === 'migrate' && t.from === '戒备' && t.value === '信任'),
+  JSON.stringify(totalSlot.transitions));
+check('迁移序列单独可查 (只看值真的变过的)', stanceTransitions(db, { chatId: 'chat001' })
+  .some((t) => t.from === '戒备' && t.value === '信任'), JSON.stringify(stanceTransitions(db, { chatId: 'chat001' })));
 
 // overview 带对端名称
 const ov = stanceOverview(db, { holderType: 'person', holderId: ella.id });
 check('overview 带对端名称', ov.every((s) => s.target_name === '主角'));
 
-// 软删
-check('软删后生效数-1', softDeleteStance(db, s2)
+// 软删 (撤销: 指针置空, 文本仍在)
+check('软删后生效数-1', softDeleteStance(db, s3)
   && currentStances(db, { holderType: 'person', holderId: ella.id }).length === 1);
 
 // ---------- 3) 立场抽取管线 ----------
@@ -122,8 +154,9 @@ const llmEvolve = createLlmClient({
 });
 const r2 = await extractStances(db, { llm: llmEvolve, chatId: 'chat001', text: '(mock)' });
 check('别名 holder 归并到艾拉', r2.stances[0].holder.name === '艾拉');
-check('演化建立 supersedes 链', r2.stances[0].supersedes === r1.stances[0].id,
-  `supersedes=${r2.stances[0].supersedes}`);
+check('同值再抽取 -> 确认而非新行 (V7 指针语义)',
+  r2.stances[0].operation === 'confirm' && r2.stances[0].supersedes === r1.stances[0].id,
+  `op=${r2.stances[0].operation} sup=${r2.stances[0].supersedes}`);
 check('旧信任立场退出当前生效', currentStances(db, {
   holderType: 'person', holderId: ella.id, targetType: 'person', targetId: hero.id, chatId: 'chat001',
 }).filter((s) => s.stance_type === '信任').length === 1);

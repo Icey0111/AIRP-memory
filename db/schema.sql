@@ -16,8 +16,8 @@ CREATE TABLE IF NOT EXISTS meta (
     value TEXT NOT NULL
 );
 
-INSERT INTO meta (key, value) VALUES ('schema_version', '6')
-ON CONFLICT (key) DO UPDATE SET value = '6';
+INSERT INTO meta (key, value) VALUES ('schema_version', '7')
+ON CONFLICT (key) DO UPDATE SET value = '7';
 
 -- ------------------------------------------------------------
 -- memories: 核心记忆表
@@ -500,6 +500,13 @@ CREATE TABLE IF NOT EXISTS stances (
     created_at      INTEGER NOT NULL,
     updated_at      INTEGER NOT NULL,
 
+    -- ---- V7: 槽位模型 (docs/verb-layer.md §16) ----
+    -- 槽位 = (holder, target, stance_dimension); 同槽位的值变化 = 一次迁移 (指针移动)。
+    -- 默认 '总体' => 旧数据零漂移; 需要并存的态度面用不同维度声明。
+    stance_dimension TEXT NOT NULL DEFAULT '总体',
+    -- 值没变、只是再次被观察到的次数 (指针未动, 只累加 —— "不是再造新文本"的落点)
+    confirms         INTEGER NOT NULL DEFAULT 0,
+
     CHECK (NOT (holder_type = target_type AND holder_id = target_id))
 );
 
@@ -509,6 +516,9 @@ CREATE INDEX IF NOT EXISTS idx_stances_target
     ON stances (target_type, target_id);
 CREATE INDEX IF NOT EXISTS idx_stances_valid
     ON stances (valid_to_event_id);
+-- V7: 槽位查找路径 (chat, holder, target, dimension)
+CREATE INDEX IF NOT EXISTS idx_stances_slot
+    ON stances (chat_id, holder_type, holder_id, target_type, target_id, stance_dimension);
 
 -- ============================================================
 -- V6: 取值元素层 + 视图隔离 (docs/verb-layer.md §16)

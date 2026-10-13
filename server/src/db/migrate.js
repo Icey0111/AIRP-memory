@@ -10,8 +10,9 @@ const MIGRATIONS = [
   { version: 4, file: '003_v3_to_v4.sql' },
   { version: 5, file: '004_v4_to_v5.sql' },
   { version: 6, file: '005_v5_to_v6.sql' },
+  { version: 7, file: '006_v6_to_v7.sql' },
 ];
-export const LATEST_SCHEMA_VERSION = 6;
+export const LATEST_SCHEMA_VERSION = 7;
 
 export function getSchemaVersion(db) {
   const hasMeta = db

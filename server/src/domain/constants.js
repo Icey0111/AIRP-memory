@@ -201,6 +201,11 @@ export const INJECTION_TABLES = {
     plainLabel: '即本心',
     unawareSuffix: '·对方不知',
     emptyBasis: '——',
+    /** 演化链的展示 (V7 槽位模型): 值变过就显示 `戒备 → 信任`; 只显示不同的值, 重复的折叠掉 */
+    showEvolution: true,
+    evolutionSep: ' → ',
+    /** 链上最多展示几个历史值 (防长链撑爆单元格) */
+    evolutionMaxValues: 3,
   },
   /** 复现计数前缀 (L2 折叠链头专用: ×3 = 该行为被反复观察到 3 次) */
   recurrenceMark: '×',
@@ -446,6 +451,45 @@ export const VERB_LAYER = {
 };
 
 // ============================================================
+// 槽位模型 (V7, 依据 docs/verb-layer.md §16)
+// ============================================================
+//
+// 用户提出的核心断言: **状态迁移 (否→是 / A→B) 不是再造新文本, 而是挪动指针**。
+// 推论 (用户补充的前提): **元素先于指针** —— 指针只能指向网中已存在的元素,
+//   所以取值本身也必须是元素 (value_nodes), 而不是随手写的自由字符串;
+//   否则"信任/信赖/信服"是三个不同文本 = 没指向同一个元素。
+//
+// 三种结构操作 (必须区分, 否则"新增"会被塞成假迁移):
+//   建立 ∅→A (唯一写文本处) / 迁移 A→B (只挪指针) / 撤销 A→∅ (指针置空)
+export const SLOT_MODEL = {
+  /** 立场槽位的缺省维度。同槽位的值变化 = 迁移; 需要并存时用不同维度声明 */
+  stanceDefaultDimension: '总体',
+  /** 槽位: (holder, target, dimension); 属性槽位: (entity, aspect) */
+  slotDefs: [
+    { kind: 'stance', label: '立场槽', key: '(持有者, 对象, 维度)', note: '值 = stance_type' },
+    { kind: 'attribute', label: '属性槽', key: '(实体, 维度)', note: '值 = 观察内容 (迁移判定待 V8)' },
+  ],
+  /** 结构操作类型 (跨端可见: 面板与注入都会提到"迁移/确认") */
+  operations: [
+    { value: 'create', label: '建立', description: '槽位从无到有, 长文本在此写一次' },
+    { value: 'migrate', label: '迁移', description: '值变了, 指针移动 (只记短标签)' },
+    { value: 'confirm', label: '确认', description: '值没变, 只是再次被观察到 (计数 +1, 不新增行)' },
+    { value: 'revoke', label: '撤销', description: '指针置空; 文本仍在, 可恢复' },
+  ],
+  /** 取值元素的 kind 取值域 (value_nodes.kind) */
+  valueKinds: [
+    { value: 'stance_type', label: '立场类型', description: '立场槽的取值域' },
+    { value: 'aspect', label: '属性维度', description: '属性槽的维度取值域' },
+  ],
+  /** 迁移记录从 supersedes 链**无损推导** (链头 = 当前指针值, 链身 = 迁移序列) */
+  derivation: {
+    currentFrom: '链头 (未被任何行 supersedes 的生效行)',
+    transitionsFrom: '沿 supersedes 指针回溯, 相邻两行的值不同 => 迁移, 相同 => 确认',
+    principle: '不新增表, 不复制文本 —— 迁移记录是视图',
+  },
+};
+
+// ============================================================
 // 阈值 (防吃书)
 // ============================================================
 
@@ -592,7 +636,7 @@ export const RULES = {
     + "scope='chat' 且 chat_id 匹配当前聊天。三者取并集。",
   softDelete: '所有 DELETE 均为软删除 (is_active=0), 数据仍在库中, 可经 /api/forget/restore 恢复。',
   supersede: '同实体同维度的新观察与旧块余弦相似度 ≥ 0.85 时自动建立 supersedes 覆盖链, 旧块转为历史不再生效。',
-  stanceEvolution: '同 (holder, target, stance_type) 的新立场自动 supersedes 旧立场; 不同类型可并存。',
+  stanceEvolution: '同槽位 (持有者, 对象, 维度) 的新立场覆盖旧立场 —— 值变了就是一次迁移, 值相同只累加确认计数; 需要并存的两种态度面用不同维度声明。',
   currentFilter: '当前生效 = is_active=1 且未过 valid_to 区间 且未被新版本 supersedes。',
   entityIdDuality:
     '两套 id 体系: character_profiles.character_id 是角色卡名字符串; '
@@ -631,6 +675,7 @@ export const ENDPOINTS = [
   { method: 'POST', path: '/api/extract', summary: '述谓实例抽取 (谁—动词—谁 + 来源/时态/极性, 含人物/地点/时间点/因果边)', needsLlm: true, needsEmbedding: false, degrade: 'error', degradeNote: 'LLM 未配置时 400' },
   { method: 'POST', path: '/api/extract-attributes', summary: '三阶属性观察抽取', needsLlm: true, needsEmbedding: true, degrade: 'error', degradeNote: 'LLM 或 embedding 未配置时 400' },
   { method: 'POST', path: '/api/extract-stances', summary: '立场抽取与演化', needsLlm: true, needsEmbedding: false, degrade: 'error', degradeNote: 'LLM 未配置时 400' },
+  { method: 'GET', path: '/api/slots', summary: '槽位与状态迁移 (当前指针值 + 迁移序列, 从 supersedes 链推导)', needsLlm: false, needsEmbedding: false, degrade: 'error', degradeNote: '不依赖任何外部能力' },
   { method: 'POST', path: '/api/profiles-derive', summary: '画像重归纳 (观察块 -> 生效画像)', needsLlm: true, needsEmbedding: false, degrade: 'error', degradeNote: '目标人物无生效观察块时短路返回空, 不触达 LLM (此时即便未配 LLM 也返回 200)' },
   { method: 'POST', path: '/api/summarize', summary: '长对话压缩: 一段剧情 -> 一条摘要记忆', needsLlm: true, needsEmbedding: false, degrade: 'error', degradeNote: 'LLM 未配置时 400' },
 

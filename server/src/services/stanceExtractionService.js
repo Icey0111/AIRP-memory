@@ -2,7 +2,7 @@
 // 演化口径: 同 (holder, target, stance_type) 的当前生效立场被新立场 supersedes;
 //           不同 stance_type 并存 (信任能力与戒备动机可以同时成立)
 import { findOrCreatePerson, findOrCreateOrg } from './entityService.js';
-import { addStance, findCurrentStance } from './stanceService.js';
+import { applyStance } from './stanceService.js';
 import { parseJsonLoose } from './extractionService.js';
 
 const EXTRACT_SYSTEM = `你是角色扮演对话的立场抽取器。从对话中抽取人物/组织之间的相对立场。
@@ -56,14 +56,10 @@ export async function extractStances(db, { llm, chatId, text, sourceMessageIds =
       if (!holder || !target) { skipped++; continue; }
       if (s.holder_type === s.target_type && holder.id === target.id) { skipped++; continue; }
 
-      // 演化判定: 同对同类型的当前生效立场 -> 被覆盖
-      const prev = findCurrentStance(db, {
-        holderType: s.holder_type, holderId: holder.id,
-        targetType: s.target_type, targetId: target.id,
-        stanceType: s.stance_type, chatId,
-      });
-
-      const id = addStance(db, {
+      // 槽位写入 (V7): 槽位为空 -> 建立; 值相同 -> 确认(不新增行); 值不同 -> 迁移。
+      // 迁移判定不再按 (holder,target,type) 找同类型旧行 —— 那是旧规则, 会让
+      // "戒备 → 信任" 变成两条并存的立场, 而指针语义要求同槽位只有一个当前值。
+      const applied = applyStance(db, {
         holderType: s.holder_type, holderId: holder.id,
         targetType: s.target_type, targetId: target.id,
         stanceType: s.stance_type,
@@ -72,17 +68,19 @@ export async function extractStances(db, { llm, chatId, text, sourceMessageIds =
         isPublic: s.is_public !== false,
         targetAware: s.target_aware !== false,
         basis: s.basis ?? '',
-        supersedesStanceId: prev?.id ?? null,
+        dimension: s.dimension ?? undefined,
         chatId, sourceMessageIds,
         importance: s.importance ?? 0.5,
       });
       results.push({
-        id,
+        id: applied.id,
+        operation: applied.operation,
         holder: { type: s.holder_type, name: holder.name },
         target: { type: s.target_type, name: target.name },
         stanceType: s.stance_type,
         intensity: s.intensity ?? 0.5,
-        supersedes: prev?.id ?? null,
+        supersedes: applied.from,
+        fromValue: applied.fromValue,
       });
     }
   });

@@ -127,7 +127,8 @@ export function buildStanceTable(db, { chatId, maxTokens = T.budgets.stances, li
     cells: {
       holder: s.holder_name ?? `#${s.holder_id}`,
       target: s.target_name ?? `#${s.target_id}`,
-      type: s.stance_type,
+      // 立场列: 值变过就显示演化链 (戒备 → 信任, 末尾即当前值), 否则就是当前值
+      type: s.evolution || s.stance_type,
       intensity: intensityLabel(s.intensity),
       display: stanceDisplayText(s),
       basis: s.basis && String(s.basis).trim() ? String(s.basis) : T.stanceDisplay.emptyBasis,
@@ -149,7 +150,13 @@ export function buildStanceTable(db, { chatId, maxTokens = T.budgets.stances, li
   };
   const fitted = fitToBudget(spec, rows, maxTokens);
   const targets = [...new Set(rows.map((r) => r.cells.target).filter(Boolean))];
-  return { ...fitted, total: Math.max(list.length, fitted.total), targets };
+  return {
+    ...fitted,
+    total: Math.max(list.length, fitted.total),
+    targets,
+    /** 值变过的立场条数 (立场列显示成 `戒备 → 信任`) */
+    evolvedCount: list.filter((s) => s.evolution).length,
+  };
 }
 
 // ---------------------------------------------------------------

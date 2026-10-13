@@ -313,6 +313,8 @@ export function mountPanel({ metaStore, injector, extractor, summarizer, log, bu
         const counts = [
           `画像 ${esc(d.profileCount)}`,
           d.stanceCount !== undefined ? `立场 ${esc(d.stanceCount)}` : null,
+          // 立场里值变过的条数 (V7: 槽位模型把"戒备 → 信任"显示在同一格里)
+          d.evolvedStanceCount ? `其中演化 ${esc(d.evolvedStanceCount)}` : null,
           d.entityCount !== undefined ? `实体 ${esc(d.entityCount)}` : null,
           d.timelineCount !== undefined ? `时间线 ${esc(d.timelineCount)}` : null,
           d.pendingCount !== undefined ? `待兑现 ${esc(d.pendingCount)}` : null,

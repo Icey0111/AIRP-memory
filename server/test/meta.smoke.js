@@ -120,7 +120,7 @@ console.log('\n--- /api/meta 基础 ---');
 const meta = (await req('/api/meta')).body;
 check('/api/meta ok', meta.ok === true && meta.service === 'tavern-memory-server');
 check('schemaVersion / latestSupported 如实上报',
-  meta.schemaVersion === getSchemaVersion(db) && meta.latestSupported === 6,
+  meta.schemaVersion === getSchemaVersion(db) && meta.latestSupported === 7,
   `${meta.schemaVersion}/${meta.latestSupported}`);
 check('runtime.version 透传', meta.version === '9.9.9', String(meta.version));
 check('limits 如实上报绑定地址与鉴权', meta.limits.auth === false && meta.limits.boundTo === '127.0.0.1:7780');
@@ -330,6 +330,7 @@ const SAMPLES = {
     stanceType: '信任', chatId: 'chat001',
   }],
   'GET /api/stances': [],
+  'GET /api/slots': [],
   'POST /api/forget': [{}],
   'POST /api/forget/restore': [{ table: 'memories', id: 1 }],
   'POST /api/summarize': [{ chatId: 'chat001', text: 'ELARA: x' }],

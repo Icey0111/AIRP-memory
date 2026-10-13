@@ -196,10 +196,12 @@ export async function assembleContext(db, embed, {
   let stanceCount = 0;
   let stanceTotal = 0;
   let stanceTokens = 0;
+  let evolvedStanceCount = 0;
   if (stance) {
     stanceCount = stance.count;
     stanceTotal = stance.total;
     stanceTokens = stance.tokens;
+    evolvedStanceCount = stance.evolvedCount ?? 0;
     if (stance.text) sections.push(stance.text);
   }
 
@@ -375,6 +377,8 @@ export async function assembleContext(db, embed, {
     stanceCount,
     stanceTotal,
     stanceTokens,
+    /** 立场里值变过的条数 (V7 槽位模型: 渲染成 `戒备 → 信任`) */
+    evolvedStanceCount,
     entityCount,
     entityTotal,
     entityTokens,

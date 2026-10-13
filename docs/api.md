@@ -353,11 +353,46 @@ holder 与 target 同实体 → 400。
 { "ok": true, "skipped": 0, "stances": [
   { "id": 2, "holder": { "type": "person", "name": "艾拉" },
     "target": { "type": "org", "name": "银手佣兵团" },
-    "stanceType": "敌对", "intensity": 0.9, "supersedes": null }
+    "stanceType": "敌对", "intensity": 0.9, "operation": "create", "supersedes": null }
 ]}
 ```
 
-演化口径：**同 (holder, target, stance_type) 的新立场自动 supersedes 旧立场**；不同 stance_type 并存（"信任其剑术"与"戒备其动机"可同存）。自指立场跳过计数。
+**V7 槽位口径（指针语义）**：槽位 = `(holder, target, dimension)`，写入按三种结构操作处理:
+
+| operation | 条件 | 存储行为 |
+|---|---|---|
+| `create` | 槽位原本为空 | 写一行（唯一写文本处） |
+| `confirm` | 槽位当前值与新值**相同** | **不新增行**，只更新幅度并 `confirms + 1` |
+| `migrate` | 槽位当前值与新值**不同** | 写一行并让它的 `supersedes` 指向槽位当前行（指针移动） |
+
+`supersedes` 即前驱行 id（`confirm` 时就是被确认的那一行）。自指立场跳过计数。
+**需要并存的两种态度面用不同 `dimension` 声明**（如 `"dimension": "动机"`）——
+同维度的值变化是迁移，不是并存。
+
+---
+
+## 8.1 槽位与状态迁移 `GET /api/slots`（V7，只读）
+
+迁移记录**从 supersedes 链推导，不建表**：链头 = 当前指针值，沿指针回溯的相邻两行值不同即为一次迁移。
+
+```json
+{ "ok": true,
+  "slots": [ { "key": "person:1>person:2@总体", "kind": "stance", "dimension": "总体",
+               "value": "信任", "confirms": 1, "stanceId": 3,
+               "transitions": [
+                 { "operation": "create", "value": "戒备", "at": 1700000000 },
+                 { "operation": "confirm", "value": "戒备", "at": 1700000100, "count": 1 },
+                 { "operation": "migrate", "from": "戒备", "value": "信任", "at": 1700000200 } ],
+               "legacyCoexist": [] } ],
+  "transitions": [ { "operation": "migrate", "from": "戒备", "value": "信任", "at": 1700000200 } ],
+  "counts": { "create": 1, "migrate": 1, "confirm": 1, "revoke": 0 },
+  "labels": { "create": "建立", "migrate": "迁移", "confirm": "确认", "revoke": "撤销" },
+  "slotDefs": [ { "kind": "stance", "label": "立场槽", "key": "(持有者, 对象, 维度)" } ] }
+```
+
+- `legacyCoexist`：V6 及以前遗留的同槽位并存行（旧规则允许不同 `stance_type` 并存），**只标注不改数据**。
+- **撤销（软删）不做自动回退**：撤销迁移行后该槽位即"没有当前值"，前驱不会复活。
+- 同一份口径也出现在注入里：【关系立场】表的「立场」列显示 `戒备 → 信任`（`meta.injectionTables.stanceDisplay`）。
 
 ---
 
@@ -395,10 +430,13 @@ holder 与 target 同实体 → 400。
   POST /api/context        { query: 最近用户输入, chatId, characterId }  → text 拼进 prompt
 
 每 N 层(或手动触发)写记忆:
-  POST /api/extract              六要素 (事件骨架)
+  POST /api/extract              述谓实例 (谁—动词—谁 + 来源/时态, V6 起)
   POST /api/extract-attributes   属性观察 (角色细节)
-  POST /api/extract-stances      立场演化 (关系变化)
+  POST /api/extract-stances      立场演化 (关系变化; 槽位模型: 值变了才是迁移)
   ↑ 三个端点互相独立, 可并行, 共用同一段对话原文
+
+槽位与迁移 (V7, 只读):
+  GET  /api/slots?chatId=        当前指针值 + 迁移序列 (从 supersedes 链推导)
 
 画像更新(抽取了属性块之后, 或手动):
   POST /api/profiles-derive { personId, characterId }

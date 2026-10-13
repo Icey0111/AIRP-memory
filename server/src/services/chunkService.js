@@ -3,6 +3,7 @@
 import { now, clamp01 } from '../utils/text.js';
 import { CHUNK_DEFAULTS, RETRIEVAL_FALLBACK_DEFAULTS } from '../domain/constants.js';
 import { packVector, unpackVector, cosine } from './embeddingClient.js';
+import { findOrCreateValue } from './valueService.js';
 
 // 当前生效过滤 (SQL 片段): 未删除 + 未过期 + 未被新版本覆盖
 const CURRENT = `
@@ -19,6 +20,8 @@ export function addChunk(db, {
 }) {
   if (!entityType || !entityId) throw new Error('entityType/entityId 必填');
   if (!aspect || !content) throw new Error('aspect/content 必填');
+  // V7: 维度名也是网络里的取值元素 (元素先于指针, §16.4) —— 注册但不改文本列
+  findOrCreateValue(db, { name: aspect, kind: 'aspect' });
   const ts = now();
   const info = db.prepare(`
     INSERT INTO attribute_chunks

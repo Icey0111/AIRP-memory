@@ -13,7 +13,7 @@ import Database from 'better-sqlite3';
 import { migrate, getSchemaVersion } from '../src/db/migrate.js';
 import { upsertProfileEntry } from '../src/services/profileService.js';
 import { findOrCreatePerson, findOrCreateOrg, findOrCreateLocation, findOrCreateTimePoint, createEvent, addEventParticipant } from '../src/services/entityService.js';
-import { addStance, currentStances, chatStances, stanceOverview, softDeleteStance } from '../src/services/stanceService.js';
+import { addStance, currentStances, chatStances, stanceOverview, softDeleteStance, applyStance } from '../src/services/stanceService.js';
 import { buildProfileTable, buildStanceTable, buildTimelineTable, buildPendingSection, eventText, createInjectionContext, intensityLabel, stanceDisplayText } from '../src/services/injectionService.js';
 import { assembleContext } from '../src/services/retrievalService.js';
 import { createMemory } from '../src/services/memoryService.js';
@@ -319,6 +319,32 @@ check('叙述者事实不套"某人说"的口吻',
 check('归属声称无情态时用兜底口吻',
   eventText({ title: 'x', isProposition: true, holderName: '信使', attitude: null, comp: { title: '去北门' }, status: 'pending' })
     .startsWith('信使声称：去北门'), '');
+
+// ===============================================================
+console.log('\n--- V7: 槽位模型 —— 立场列显示演化链 (值变过才显示) ---');
+const v7alice = findOrCreatePerson(db, { name: 'V7甲' });
+const v7bob = findOrCreatePerson(db, { name: 'V7乙' });
+addStance(db, {
+  holderType: 'person', holderId: v7alice.id, targetType: 'person', targetId: v7bob.id,
+  stanceType: '戒备', intensity: 0.6, basis: '初遇', chatId: CHAT,
+});
+const v7migrated = applyStance(db, {
+  holderType: 'person', holderId: v7alice.id, targetType: 'person', targetId: v7bob.id,
+  stanceType: '信任', intensity: 0.7, basis: '共患难后', chatId: CHAT,
+});
+check('同槽位再写不同值 => 迁移', v7migrated.operation === 'migrate', v7migrated.operation);
+const v7table = buildStanceTable(db, { chatId: CHAT });
+const V = T.stanceDisplay;
+check('演化链由 constants 的分隔符串成 (戒备 → 信任)',
+  v7table.text.includes(`戒备${V.evolutionSep}信任`), v7table.text);
+check('未变过的立场不显示演化 (仍是纯值)',
+  buildStanceTable(db, { chatId: CHAT }).text.includes('亲疏') === false);
+check('上报演化条数 (供面板显示"其中演化 n")',
+  v7table.evolvedCount >= 1, String(v7table.evolvedCount));
+
+const ctxEvolved = await assembleContext(db, null, { query: '', chatId: CHAT, characterId: '艾拉' });
+check('assembleContext 上报 evolvedStanceCount',
+  ctxEvolved.evolvedStanceCount >= 1, String(ctxEvolved.evolvedStanceCount));
 
 // ===============================================================
 console.log('');

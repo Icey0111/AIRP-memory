@@ -69,7 +69,7 @@ const eventsBefore = oldDb.prepare('SELECT COUNT(*) n FROM events').get().n;
 const linksBefore = oldDb.prepare('SELECT COUNT(*) n FROM event_links').get().n;
 
 const version = migrate(oldDb, migDir, () => {});
-check('迁移后 schema_version=6', version === 6 && getSchemaVersion(oldDb) === 6, String(version));
+check('迁移后 schema_version=7', version === 7 && getSchemaVersion(oldDb) === 7, String(version));
 check('事件一行不少 (迁移前 3)', oldDb.prepare('SELECT COUNT(*) n FROM events').get().n === eventsBefore
   && eventsBefore === 3, `before=${eventsBefore}`);
 check('因果边一行不少 (迁移前 2)', oldDb.prepare('SELECT COUNT(*) n FROM event_links').get().n === linksBefore
@@ -157,8 +157,8 @@ const freshDb = new Database(':memory:');
 freshDb.pragma('foreign_keys = ON');
 fs.copyFileSync(path.join(dbDir, 'schema.sql'), path.join(migDir, 'schema.sql'));
 migrate(freshDb, migDir, () => {});
-check('全新引导即为 v6', getSchemaVersion(freshDb) === 6, String(getSchemaVersion(freshDb)));
-check('全新库也带 LATEST_SCHEMA_VERSION 一致', LATEST_SCHEMA_VERSION === 6);
+check('全新引导即为 v7', getSchemaVersion(freshDb) === 7, String(getSchemaVersion(freshDb)));
+check('全新库也带 LATEST_SCHEMA_VERSION 一致', LATEST_SCHEMA_VERSION === 7);
 check('全新库同样有视图', freshDb.prepare('SELECT COUNT(*) n FROM v_facts').get().n === 0
   && freshDb.prepare('SELECT COUNT(*) n FROM v_propositions').get().n === 0);
 check('全新库同样有 value_nodes',
