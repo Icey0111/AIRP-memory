@@ -67,6 +67,13 @@ git clone https://github.com/Icey0111/AIRP-memory <SillyTavern>/public/scripts/e
 > `127.0.0.1` / `[::1]` 的任意端口。若酒馆挂在别的源（反向代理、局域网域名），
 > 把它加进 `server/config.json` 的 `server.cors.origins`。
 
+### 免终端运行：随酒馆自动启停（推荐）
+
+最彻底的方案：把 `server-plugin/tavern-memory/` 整个文件夹复制到酒馆根目录的 `plugins/` 下，
+打开里面的 `index.js` 把顶部 `SERVER_DIR` 改成记忆服务所在目录，再在酒馆 `config.yaml` 里
+开启 `enableServerPlugins: true`，重启酒馆。效果：**酒馆启动 => 记忆服务自动后台启动；
+酒馆关闭 => 记忆服务一起停止**。零窗口、零终端、零常驻。
+
 ### 免终端运行：开机自启（Windows）
 
 不想开终端窗口挂服务的话，装一次自启即可（服务登录后**隐藏窗口后台运行**，无任何弹窗）：
@@ -77,6 +84,9 @@ git clone https://github.com/Icey0111/AIRP-memory <SillyTavern>/public/scripts/e
 
 安装后**重启电脑**（或直接双击启动项文件夹里生成的 `tavern-memory-autostart.vbs`）服务即启动；
 面板有离线自动探测，连上就解锁，全程无需终端。
+
+只想立刻启动一次：双击根目录的 **`start-server.bat`**（最小化窗口运行，可直接关掉弹出的窗口，
+服务继续挂在任务栏）。
 
 ### 手机 / 局域网访问
 
