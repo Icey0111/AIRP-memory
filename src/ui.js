@@ -706,6 +706,9 @@ export function mountPanel({ api, metaStore, injector, extractor, summarizer, lo
   // 应用成功即清空 —— 与"密钥不进前端"的折中已在注释里如实标注。
   let lastConfigView = null;
   let lastConfigError = '';
+  // 用户手动改过的输入框 id 集合: 自动探测每 10s 重渲染一次表单,
+  // 若不跳过用户正在输入的框, 打到一半的字会被冲掉 (实测反馈: "输入进去又消失")
+  const cfgDirtyIds = new Set();
 
   function setCfgStatus(text) {
     const el = document.getElementById('tm_cfg_status');
@@ -715,13 +718,21 @@ export function mountPanel({ api, metaStore, injector, extractor, summarizer, lo
   function fillFormFrom(source, isServerView) {
     const llm = isServerView ? (source?.config?.llm ?? {}) : (source?.llm ?? {});
     const emb = isServerView ? (source?.config?.embedding ?? {}) : (source?.embedding ?? {});
-    document.getElementById('tm_cfg_llm_baseurl').value = llm.baseUrl ?? '';
-    document.getElementById('tm_cfg_llm_model').value = llm.model ?? '';
-    document.getElementById('tm_cfg_embed_baseurl').value = emb.baseUrl ?? '';
-    document.getElementById('tm_cfg_embed_model').value = emb.model ?? '';
+    // 用户正在输入 (聚焦或已改动) 的框绝不清空 —— 数据源刷新不能吃掉用户正在打的字
+    const setVal = (id, v) => {
+      const el = document.getElementById(id);
+      if (!el || cfgDirtyIds.has(id) || document.activeElement === el) return;
+      el.value = v;
+    };
+    setVal('tm_cfg_llm_baseurl', llm.baseUrl ?? '');
+    setVal('tm_cfg_llm_model', llm.model ?? '');
+    setVal('tm_cfg_embed_baseurl', emb.baseUrl ?? '');
+    setVal('tm_cfg_embed_model', emb.model ?? '');
     // 密钥框永远清空: 已配置时只显示打码占位, 明文从不回显
-    document.getElementById('tm_cfg_llm_key').value = '';
-    document.getElementById('tm_cfg_embed_key').value = '';
+    for (const id of ['tm_cfg_llm_key', 'tm_cfg_embed_key']) {
+      const el = document.getElementById(id);
+      if (el && !cfgDirtyIds.has(id) && document.activeElement !== el) el.value = '';
+    }
     if (isServerView) {
       document.getElementById('tm_cfg_llm_key').placeholder = llm.apiKeySet
         ? `已配置 (${llm.apiKey}) · 留空保持不变` : '未配置';
@@ -785,6 +796,7 @@ export function mountPanel({ api, metaStore, injector, extractor, summarizer, lo
           const r = await api.saveConfig(pending);
           lastConfigView = r;
           getSettings().pendingModelConfig = null;
+          cfgDirtyIds.clear();
           saveSettings();
           const capName = (d) => (d?.model ? `${d.provider}/${d.model}` : '未填模型名');
           setCfgStatus(`已自动应用此前暂存的模型配置: LLM ${capName(r.llm)} · Embedding ${capName(r.embedding)}`);
@@ -837,6 +849,7 @@ export function mountPanel({ api, metaStore, injector, extractor, summarizer, lo
       }
       const r = await api.saveConfig(payload);
       lastConfigView = r;
+      cfgDirtyIds.clear();
       renderConfigForm();
       const cap = (d) => (d?.configured ? `${d.provider}/${d.model}` : (d?.apiKeySet ?? d?.configured === false ? '密钥已存, 还差 baseUrl/模型名' : '未配置'));
       setCfgStatus(`已保存并生效 (无需重启): LLM ${cap(r.llm)} · Embedding ${cap(r.embedding)}`);
@@ -939,6 +952,10 @@ export function mountPanel({ api, metaStore, injector, extractor, summarizer, lo
 
   document.getElementById('tm_reload_meta')?.addEventListener('click', () => void reloadMeta());
   document.getElementById('tm_cfg_save')?.addEventListener('click', () => void saveConfig());
+  for (const id of ['tm_cfg_llm_baseurl', 'tm_cfg_llm_model', 'tm_cfg_llm_key',
+    'tm_cfg_embed_baseurl', 'tm_cfg_embed_model', 'tm_cfg_embed_key']) {
+    document.getElementById(id)?.addEventListener('input', () => cfgDirtyIds.add(id));
+  }
   document.getElementById('tm_run_write')?.addEventListener('click', () => void runWrite());
   document.getElementById('tm_run_preview')?.addEventListener('click', () => void runPreview());
   document.getElementById('tm_run_summary')?.addEventListener('click', () => void runSummary());
