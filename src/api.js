@@ -91,6 +91,7 @@ export function createApi(getSettings) {
     extractAttributes: (payload, opts) => request('POST', '/api/extract-attributes', { body: payload, ...opts }),
     extractStances: (payload, opts) => request('POST', '/api/extract-stances', { body: payload, ...opts }),
     deriveProfile: (payload, opts) => request('POST', '/api/profiles-derive', { body: payload, ...opts }),
+    summarize: (payload, opts) => request('POST', '/api/summarize', { body: payload, ...opts }),
 
     forget: (payload, opts) => request('POST', '/api/forget', { body: payload ?? {}, ...opts }),
     forgetRestore: (payload, opts) => request('POST', '/api/forget/restore', { body: payload, ...opts }),

@@ -13,7 +13,7 @@ import {
   ASPECT_SUGGESTIONS, STANCE_TYPE_SUGGESTIONS,
   CHUNK_DEFAULTS, STANCE_DEFAULTS,
   RETRIEVAL_SCORING, RETRIEVAL_FALLBACK_DEFAULTS, TOKEN_ESTIMATION, CONTEXT_SECTIONS,
-  THRESHOLDS, FORGET_SCORING, FORGET_TABLES,
+  THRESHOLDS, SUMMARY_POLICY, FORGET_SCORING, FORGET_TABLES,
   RULES, ENDPOINTS,
 } from '../domain/constants.js';
 
@@ -92,6 +92,14 @@ export function buildMeta(db, { llm = null, embed = null, retrieval = {}, runtim
       chunk: CHUNK_DEFAULTS,
       stance: STANCE_DEFAULTS,
       forget: FORGET_SCORING.defaults,
+      summary: {
+        triggerTokens: SUMMARY_POLICY.triggerTokens,
+        minTokens: SUMMARY_POLICY.minTokens,
+        maxBatchTokens: SUMMARY_POLICY.maxBatchTokens,
+        maxSummaryChars: SUMMARY_POLICY.maxSummaryChars,
+        keepRecentMessages: SUMMARY_POLICY.keepRecentMessages,
+        importance: SUMMARY_POLICY.defaultImportance,
+      },
     },
 
     // ---------- 枚举 ----------
@@ -134,6 +142,10 @@ export function buildMeta(db, { llm = null, embed = null, retrieval = {}, runtim
 
     thresholds: THRESHOLDS,
     contextSections: CONTEXT_SECTIONS,
+
+    // ---------- 长对话压缩策略: 前端据此累计 token 并决定何时总结 ----------
+    // 阈值属于跨端语义, 前端不另存一份; 设置里同名字段为 0/-1 时即"用这里的值"
+    summaryPolicy: SUMMARY_POLICY,
 
     // ---------- 生效规则 (文案口径统一) ----------
     rules: RULES,

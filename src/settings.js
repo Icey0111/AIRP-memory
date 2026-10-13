@@ -46,6 +46,14 @@ export const DEFAULT_SETTINGS = {
   writeStances: true,
   deriveProfile: true,
 
+  // ---- 总结与压缩 (长对话) ----
+  // 阈值类字段填 0 / -1 表示"用服务端建议值" (/api/meta 的 summaryPolicy):
+  // 前端不复制一份阈值, 服务端调参后前端自动跟随。
+  summaryEnabled: false,
+  summaryTriggerTokens: 0,        // 0 = 用服务端建议 (当前 6000)
+  summaryKeepRecentMessages: -1,  // -1 = 用服务端建议 (当前 6); 0 = 被总结的正文全部隐藏
+  summaryHideAfter: true,         // 总结完成后隐藏被覆盖的正文
+
   debugLog: false,
 
   // 面板模块折叠状态 —— 由 UI 自身读写, 没有对应控件 (见下方的 NO_UI_KEYS)。

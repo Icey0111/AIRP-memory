@@ -87,6 +87,38 @@ export function createMetaStore(api, { bus = null, log = null } = {}) {
     return meta?.thresholds ?? null;
   }
 
+  /**
+   * 长对话压缩策略 (触发阈值/上下限/建议保留条数/理由/预设)。
+   * 未载入返回 null —— 调用方不得退回本地硬编码的阈值。
+   */
+  function summaryPolicy() {
+    return meta?.summaryPolicy ?? null;
+  }
+
+  /**
+   * token 估算系数 (字符数 / token), 由服务端下发。未载入或未提供时返回 null ——
+   * 调用方不得用 2 之类的数字兜底, 那等于在前端藏了一份语义。
+   */
+  function charsPerToken() {
+    const c = Number(getScoring()?.tokenEstimation?.charsPerToken);
+    return Number.isFinite(c) && c > 0 ? c : null;
+  }
+
+  /** 按字符数估算 token; 系数缺失返回 null, 表达"无法估算"而非"是 0" */
+  function estimateTokensByChars(chars) {
+    const c = charsPerToken();
+    if (c === null) return null;
+    const n = Number(chars);
+    return Number.isFinite(n) && n > 0 ? Math.ceil(n / c) : 0;
+  }
+
+  /** 估算一段文本的 token; 系数缺失返回 null */
+  function estimateTokens(text) {
+    const c = charsPerToken();
+    if (c === null) return null;
+    return Math.ceil(String(text ?? '').length / c);
+  }
+
   function getRules() {
     return meta?.rules ?? null;
   }
@@ -126,5 +158,6 @@ export function createMetaStore(api, { bus = null, log = null } = {}) {
     refresh, snapshot, isLoaded, getMeta, getStatus,
     getEnum, getEnumOptions, label, getDefaults, capability,
     getScoring, getThresholds, getRules, endpoint, canCall, llmRequestTimeoutMs,
+    summaryPolicy, estimateTokens, charsPerToken, estimateTokensByChars,
   };
 }

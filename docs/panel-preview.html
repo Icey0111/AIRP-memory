@@ -459,6 +459,57 @@ input[type=checkbox] { accent-color: #79b8ff; }
           </div>
         </section>
 
+        <!-- ============ 总结与压缩 ============ -->
+        <section class="tm-module" data-tm-module="summary">
+          <div class="tm-module-head" role="button" tabindex="0" aria-expanded="true">
+            <span class="tm-caret">▾</span>
+            <span class="tm-module-title">总结与压缩 · 长对话</span>
+            <span class="tm-module-tag" id="tm_tag_summary"></span>
+          </div>
+          <div class="tm-module-body">
+            <label class="checkbox_label" for="tm_summary_enabled">
+              <input id="tm_summary_enabled" type="checkbox">
+              <span>累计到阈值自动总结</span>
+            </label>
+            <label class="tm-row">
+              <span class="tm-label">触发阈值</span>
+              <input id="tm_summary_trigger" class="text_pole tm-num" type="number" min="0" max="20000" step="500">
+              <span class="tm-muted">估算 token</span>
+              <span class="tm-muted tm-placeholder-default" data-tm-default="summary.triggerTokens"></span>
+            </label>
+            <label class="tm-row">
+              <span class="tm-label">保留最近</span>
+              <input id="tm_summary_keep" class="text_pole tm-num" type="number" min="-1" max="100" step="1">
+              <span class="tm-muted">条不隐藏（<b>0 = 被总结的正文全部隐藏</b>；-1 = 用服务端建议）</span>
+            </label>
+            <label class="checkbox_label" for="tm_summary_hide">
+              <input id="tm_summary_hide" type="checkbox">
+              <span>总结后隐藏被覆盖的正文</span>
+            </label>
+            <div class="tm-hint">隐藏走酒馆原生的 <code>/hide</code>（等价于给楼层置 <code>is_system</code>）：这些消息不进 prompt，也不再计入累计 token，因此不会被重复总结。随时可用下面的「取消隐藏」放回。</div>
+
+            <div class="tm-subsection">
+              <div class="tm-subsection-title">服务端策略</div>
+              <div id="tm_summary_policy" class="tm-detail tm-muted">契约未载入</div>
+            </div>
+
+            <div class="tm-row">
+              <span class="tm-label">当前累计</span>
+              <span id="tm_summary_state" class="tm-detail tm-muted">—</span>
+            </div>
+
+            <div class="tm-row">
+              <span class="tm-label">操作</span>
+              <span class="tm-actions">
+                <input id="tm_run_summary" class="menu_button" type="button" value="立即总结">
+                <input id="tm_unhide" class="menu_button" type="button" value="取消隐藏">
+                <input id="tm_clear_summary" class="menu_button" type="button" value="重置总结边界">
+              </span>
+            </div>
+            <div id="tm_summary_result" class="tm-detail tm-muted">—</div>
+          </div>
+        </section>
+
         <!-- ============ 手动操作 ============ -->
         <section class="tm-module" data-tm-module="manual">
           <div class="tm-module-head" role="button" tabindex="0" aria-expanded="false">
@@ -553,9 +604,19 @@ input[type=checkbox] { accent-color: #79b8ff; }
   $('tm_write_count').value = '10';
   $('tm_write_max_chars').value = '4000';
 
+  $('tm_summary_enabled').checked = true;
+  $('tm_summary_trigger').value = '0';
+  $('tm_summary_keep').value = '-1';
+  $('tm_summary_hide').checked = true;
+
+  var defaultHints = {
+    'retrieval.topK': 8,
+    'retrieval.tokenBudget': 1200,
+    'summary.triggerTokens': 6000
+  };
   Array.prototype.forEach.call(document.querySelectorAll('[data-tm-default]'), function (el) {
-    el.textContent = el.getAttribute('data-tm-default') === 'retrieval.topK'
-      ? '服务端默认 8' : '服务端默认 1200';
+    var v = defaultHints[el.getAttribute('data-tm-default')];
+    el.textContent = v === undefined ? '' : ('服务端默认 ' + v);
   });
 
   var steps = [
@@ -589,6 +650,7 @@ input[type=checkbox] { accent-color: #79b8ff; }
     + '<tr><td class="tm-mono">POST /api/extract</td><td>LLM</td><td><span class="tm-badge tm-badge-ok">可用</span></td><td><span class="tm-badge tm-badge-error">报错</span></td></tr>'
     + '<tr><td class="tm-mono">POST /api/extract-attributes</td><td>LLM + embedding</td><td><span class="tm-badge tm-badge-ok">可用</span></td><td><span class="tm-badge tm-badge-error">报错</span></td></tr>'
     + '<tr><td class="tm-mono">POST /api/profiles-derive</td><td>LLM</td><td><span class="tm-badge tm-badge-blocked">LLM 未配置</span></td><td><span class="tm-badge tm-badge-error">报错</span></td></tr>'
+    + '<tr><td class="tm-mono">POST /api/summarize</td><td>LLM</td><td><span class="tm-badge tm-badge-ok">可用</span></td><td><span class="tm-badge tm-badge-error">报错</span></td></tr>'
     + '</tbody></table>';
 
   $('tm_contract').innerHTML =
@@ -601,6 +663,18 @@ input[type=checkbox] { accent-color: #79b8ff; }
     + '</dl>';
 
   $('tm_status').textContent = '最近一次注入：3 条记忆 + 2 条细节 · 用 412 / 1200 token · 33ms';
+
+  $('tm_summary_policy').innerHTML =
+    '<div class="tm-mono">阈值 6000 · 下限 1500 · 单批上限 12000 token · 摘要上限 800 字</div>'
+    + '<div class="tm-muted">量纲：估算 token ≈ ⌈字符数 / 2⌉</div>'
+    + '<div class="tm-muted">按本系统的估算口径, 典型中文角色扮演单条约 150-300 token, 一轮往返约 300-600 token; '
+    + '6000 token 大致是 20 条消息 / 10 轮往返, 接近"一小场戏"的粒度。</div>'
+    + '<div class="tm-muted">按上下文选择：8192 → 3000（固定开销占比大）；16384 → 6000（默认量级）；32768 → 10000；131072 → 12000</div>';
+  $('tm_summary_state').innerHTML =
+    '待总结 <b>4120</b> / 6000 token · 12 条（楼层 24–35）· 已总结至 23 · 已隐藏 6 条';
+  $('tm_summary_result').innerHTML =
+    '<div>楼层 12–23（12 条 · 约 6180 token） → 摘要记忆 #41</div>'
+    + '<div class="tm-muted">已隐藏 6 条（酒馆命令，楼层 12–17）</div>';
   $('tm_preview_result').innerHTML =
     '<div class="tm-muted">query: 艾拉为什么会离开北境的哨塔</div>'
     + '<div>注入文本 412/1200 token · 画像 2 · 记忆 3 · 细节 2</div>'
@@ -614,10 +688,11 @@ input[type=checkbox] { accent-color: #79b8ff; }
   $('tm_tag_connection').textContent = '已连接 v0.1.0';
   $('tm_tag_inject').textContent = '开';
   $('tm_tag_write').textContent = '关';
-  $('tm_tag_diagnostics').textContent = '16/17 端点可用';
+  $('tm_tag_summary').textContent = '4120/6000 token · 隐藏 6 条';
+  $('tm_tag_diagnostics').textContent = '17/18 端点可用';
 
   // ---------- 折叠交互 (与 ui.js 同语义, 但预览不落盘) ----------
-  var MODULE_KEYS = ['connection', 'inject', 'write', 'manual', 'diagnostics'];
+  var MODULE_KEYS = ['connection', 'inject', 'write', 'summary', 'manual', 'diagnostics'];
   var state = { write: true, manual: true, diagnostics: true };
 
   function moduleEl(key) { return document.querySelector('[data-tm-module="' + key + '"]'); }

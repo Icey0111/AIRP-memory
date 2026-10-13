@@ -414,9 +414,10 @@ curl http://127.0.0.1:7780/api/meta
 | `service` `version` `schemaVersion` `latestSupported` | 服务标识与 schema 版本 |
 | `generatedAt` | 生成时间（Unix 秒） |
 | `capabilities` | 运行时能力：`llm` / `embedding` / `vectorSearch` / `storage` |
-| `defaults` | **生效**默认值：`retrieval`（受 config 影响）/ `memory` / `chunk` / `stance` / `forget` |
+| `defaults` | **生效**默认值：`retrieval`（受 config 影响）/ `memory` / `chunk` / `stance` / `forget` / `summary` |
 | `enums` | 枚举与标签，每项 `{ constrained, options:[{value,label,...}], note }` |
 | `scoring` | 打分口径：`retrieval` / `forget` / `tokenEstimation`，含 `formula` 原文 |
+| `summaryPolicy` | 长对话压缩策略：触发阈值/下限/单批上限/摘要长度上限/建议保留条数/理由/预设/合法区间 |
 | `thresholds` | `supersedeSimilarity` / `similarityMetric` |
 | `contextSections` | 注入文本的段落顺序 |
 | `rules` | 生效规则文案：可见性、当前生效口径、软删除、supersede、立场演化、两套 id 体系… |
@@ -516,3 +517,77 @@ curl http://127.0.0.1:7780/api/meta
 4. 以上第 1、2 条由自动化测试钉死：
    - `server/test/meta.smoke.js`：枚举与常量同源、每个声明端点真实存在、`needsLlm/needsEmbedding` 标记与实测行为一致、声明 `degrade=silent` 的端点在“embedding 客户端存在但未配置”时确实不报错、CORS 放行与拒绝行为。
    - 仓库根目录的 `check-contract.mjs`（即扩展自带的前端检查脚本）：用前端自己的 `api.js`/`meta.js` 对接真实服务，校验 `canCall` 与声明逐条一致、标签取自服务端、超时由服务端推算、服务不可达时一律不可用。
+
+---
+
+## 13. 长对话压缩 `POST /api/summarize`
+
+把一段剧情压成**一条摘要记忆**（`memories.type = 'summary'`）。
+
+摘要**不是**另存一份结构 —— 它就是普通的一阶记忆，因此可见性（`scope`/`chat_id`）、软删除、FTS 检索、遗忘衰减全部沿用同一套规则；注入时和其它记忆一起参与打分。
+
+> **何时调用由前端决定。** 服务端只负责"给一段文本，还一条摘要"。触发阈值、下限、单批上限、摘要长度上限都在 `GET /api/meta` 的 `summaryPolicy` 里下发，前端不另存一份。取值依据与调参建议见 [summarization.md](./summarization.md)。
+
+### 请求
+
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| `chatId` | 是 | 摘要以 `scope='chat'` 写入该会话 |
+| `text` | 是 | 待压缩的对话原文（前端拼好，形如逐行 `角色名: 内容`） |
+| `sourceMessageIds` | | 覆盖的楼层号数组，用于溯源与**去重** |
+| `characterId` | | 仅作上下文记录，不改变落库作用域 |
+| `inWorldTime` | | 剧情内时间标签 |
+| `keywords` | | 调用方补充的关键词，与模型产出的关键词合并 |
+| `importance` | | 缺省取 `summaryPolicy.defaultImportance` |
+| `maxChars` | | 摘要正文上限，会被**钳制**到 `summaryPolicy.maxSummaryChars`（调用方无法突破） |
+| `dedupe` | | 默认 `true`：同一聊天内覆盖楼层集合完全相同时复用既有摘要 |
+
+```bash
+curl -X POST http://127.0.0.1:7780/api/summarize \
+  -H 'Content-Type: application/json' \
+  -d '{"chatId":"c1","text":"主角: 你还记得那个雨夜吗\n艾拉: 记得。","sourceMessageIds":["0","1"]}'
+```
+
+### 响应
+
+```json
+{
+  "ok": true,
+  "deduped": false,
+  "memoryId": 41,
+  "memory": {
+    "id": 41, "type": "summary", "scope": "chat", "chatId": "c1",
+    "content": "暴雨夜主角躲进夜莺酒馆…",
+    "keywords": "艾拉 夜莺酒馆 结伴",
+    "importance": 0.6, "sourceMessageIds": ["0", "1"],
+    "tags": ["summary"], "inWorldTime": null, "createdAt": 1791234567
+  },
+  "coveredMessageIds": ["0", "1"],
+  "keyPoints": ["与艾拉在酒馆初遇", "约定次日结伴出城"],
+  "truncated": false,
+  "inputChars": 812
+}
+```
+
+- `deduped: true` 时 `memoryId` 是既有摘要的 id，`keyPoints` 为空数组（**没有**重新调用 LLM）—— 手工连点两次"立即总结"不会产生两条一样的摘要。
+- `truncated: true` 表示模型输出超长、已按上限截断并以 `…` 收尾。
+- 缺 `chatId` / 空 `text` 返回 400；LLM 未配置返回 400 `"LLM 客户端未初始化"`（与 `needsLlm: true` 声明一致）。
+
+### `summaryPolicy`（`/api/meta` 下发）
+
+```json
+{
+  "triggerTokens": 6000,
+  "minTokens": 1500,
+  "maxBatchTokens": 12000,
+  "maxSummaryChars": 800,
+  "defaultImportance": 0.6,
+  "keepRecentMessages": 6,
+  "trigger": "estimated-tokens",
+  "rationale": "…为什么取这个量级…",
+  "presets": [{ "contextSize": 16384, "triggerTokens": 6000, "note": "默认量级, 兼顾粒度与安全" }],
+  "limits": { "min": 1000, "max": 20000 }
+}
+```
+
+`scoring.tokenEstimation.charsPerToken` 是前端做模糊估算用的系数 —— **前端按它算，不写死 2**；`formula` 文本里的数字由同一个常量生成，不会出现"公式说 2、参数写 3"的分裂。

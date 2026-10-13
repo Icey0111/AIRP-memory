@@ -15,6 +15,7 @@ import { addChunk, listChunks, softDeleteChunk, stripEmbedding } from '../servic
 import { extractAttributes, deriveProfile } from '../services/chunkExtractionService.js';
 import { addStance, listStances, softDeleteStance, stanceOverview } from '../services/stanceService.js';
 import { extractStances } from '../services/stanceExtractionService.js';
+import { summarizeConversation } from '../services/summaryService.js';
 import { runForgetTask, restoreForgotten } from '../services/forgetService.js';
 import { RETRIEVAL_FALLBACK_DEFAULTS, FORGET_SCORING } from '../domain/constants.js';
 import { buildMeta } from './meta.js';
@@ -260,6 +261,26 @@ export function createRouter(db, { llm = null, embed = null, retrieval = {}, run
       ok: true,
       ...(await deriveProfile(db, { llm, personId: Number(personId), characterId })),
     });
+  }));
+
+  // ---------- 长对话压缩 (LLM) ----------
+  // 前端累计估算 token 达阈值时调用; 阈值来自 /api/meta 的 summaryPolicy
+  router.post('/api/summarize', handleAsync(async (req, res) => {
+    if (!llm) throw new Error('LLM 客户端未初始化');
+    const {
+      chatId, text, sourceMessageIds, characterId,
+      inWorldTime, keywords, importance, maxChars, dedupe,
+    } = req.body ?? {};
+    res.json(await summarizeConversation(db, llm, {
+      chatId, text,
+      sourceMessageIds: sourceMessageIds ?? [],
+      characterId: characterId ?? null,
+      inWorldTime: inWorldTime ?? null,
+      keywords: keywords ?? '',
+      importance: importance ?? null,
+      maxChars: maxChars ?? null,
+      dedupe: dedupe !== false,
+    }));
   }));
 
   // ---------- V4 相对立场 ----------

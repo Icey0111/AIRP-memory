@@ -38,13 +38,19 @@ const FIELDS = [
   { sel: '#tm_write_count', key: 'writeMessageCount', type: 'int' },
   { sel: '#tm_write_max_chars', key: 'writeMaxChars', type: 'int' },
 
+  { sel: '#tm_summary_enabled', key: 'summaryEnabled', type: 'bool' },
+  { sel: '#tm_summary_trigger', key: 'summaryTriggerTokens', type: 'int' },
+  // -1 表示"用服务端建议", 所以下限是 -1 而不是 0
+  { sel: '#tm_summary_keep', key: 'summaryKeepRecentMessages', type: 'int', min: -1 },
+  { sel: '#tm_summary_hide', key: 'summaryHideAfter', type: 'bool' },
+
   { sel: '#tm_debug', key: 'debugLog', type: 'bool' },
 ];
 
 // 面板模块, 与 settings.html 里的 data-tm-module 一一对应; 顺序即显示顺序
-const MODULE_KEYS = ['connection', 'inject', 'write', 'manual', 'diagnostics'];
+const MODULE_KEYS = ['connection', 'inject', 'write', 'summary', 'manual', 'diagnostics'];
 
-export function mountPanel({ metaStore, injector, extractor, log, bus }) {
+export function mountPanel({ metaStore, injector, extractor, summarizer, log, bus }) {
   const root = document.getElementById('tavern_memory_panel');
   if (!root) {
     console.error('[记忆系统] 未找到面板节点 #tavern_memory_panel, 设置面板载入失败');
@@ -54,6 +60,7 @@ export function mountPanel({ metaStore, injector, extractor, log, bus }) {
   let lastMeta = null;
   let lastInjectOutcome = null;
   let lastWriteReport = null;
+  let lastSummaryReport = null;
   let lastPreview = null;
 
   // ---------- 步骤开关 (由 STEP_LIST 生成, 可用性取自 meta) ----------
@@ -102,8 +109,11 @@ export function mountPanel({ metaStore, injector, extractor, log, bus }) {
       el.addEventListener(evt, () => {
         const s = getSettings();
         if (f.type === 'bool') s[f.key] = el.checked;
-        else if (f.type === 'int') s[f.key] = Math.max(f.min ?? 0, Math.trunc(Number(el.value) || 0));
-        else s[f.key] = el.value;
+        else if (f.type === 'int') {
+          // 输入框被清空时不覆盖已存值, 免得"删掉重打"的中间态被当成 0 存下去
+          if (el.value === '') return;
+          s[f.key] = Math.max(f.min ?? 0, Math.trunc(Number(el.value) || 0));
+        } else s[f.key] = el.value;
         saveSettings();
         renderModuleTags();
         if (f.after === 'reloadMeta') void reloadMeta();
@@ -356,17 +366,80 @@ export function mountPanel({ metaStore, injector, extractor, log, bus }) {
   }
 
   // ---------- 渲染: 默认值提示 (放到输入框占位里) ----------
+  // data-tm-default 写的是 defaults 里的路径 (如 retrieval.topK / summary.triggerTokens),
+  // 统一按路径取值, 新增字段不用再改这里。
   function renderDefaultHints() {
-    const d = metaStore.getDefaults()?.retrieval;
+    const d = metaStore.getDefaults();
+    const lookup = (path) => path.split('.').reduce((acc, k) => (acc == null ? null : acc[k]), d);
     for (const el of document.querySelectorAll('[data-tm-default]')) {
-      const key = el.getAttribute('data-tm-default');
-      const val = key === 'retrieval.topK' ? d?.topK : d?.tokenBudget;
+      const val = lookup(el.getAttribute('data-tm-default'));
       el.textContent = val === undefined || val === null ? '' : `服务端默认 ${val}`;
     }
     const topk = document.getElementById('tm_topk');
     const budget = document.getElementById('tm_token_budget');
-    if (topk && d?.topK) topk.placeholder = `${d.topK}（0=默认）`;
-    if (budget && d?.tokenBudget) budget.placeholder = `${d.tokenBudget}（0=默认）`;
+    const trigger = document.getElementById('tm_summary_trigger');
+    if (topk && d?.retrieval?.topK) topk.placeholder = `${d.retrieval.topK}（0=默认）`;
+    if (budget && d?.retrieval?.tokenBudget) budget.placeholder = `${d.retrieval.tokenBudget}（0=默认）`;
+    if (trigger && d?.summary?.triggerTokens) trigger.placeholder = `${d.summary.triggerTokens}（0=默认）`;
+  }
+
+  // ---------- 渲染: 总结与压缩 ----------
+  // 阈值、上下限、理由、预设、token 系数全部原样取自服务端, 前端不重写说法。
+  function renderSummary() {
+    const policyEl = document.getElementById('tm_summary_policy');
+    const stateEl = document.getElementById('tm_summary_state');
+    const resultEl = document.getElementById('tm_summary_result');
+    if (!policyEl || !stateEl || !resultEl) return;
+
+    const p = metaStore.summaryPolicy();
+    if (!p) {
+      policyEl.innerHTML = '<span class="tm-muted">未载入契约 —— 触发阈值与长度上限需连接后由服务端下发</span>';
+      stateEl.textContent = '—';
+      renderSummaryResult(resultEl);
+      return;
+    }
+
+    const st = summarizer.status();
+    const presets = (p.presets ?? [])
+      .map((x) => `${esc(x.contextSize)} → ${esc(x.triggerTokens)}（${esc(x.note)}）`).join('；');
+    policyEl.innerHTML = `
+      <div class="tm-mono">阈值 ${esc(st.triggerTokens ?? '?')} · 下限 ${esc(p.minTokens)} ·
+        单批上限 ${esc(p.maxBatchTokens)} token · 摘要上限 ${esc(p.maxSummaryChars)} 字</div>
+      <div class="tm-muted">量纲：${esc(metaStore.getScoring()?.tokenEstimation?.formula ?? '未声明')}</div>
+      <div class="tm-muted">${esc(p.rationale ?? '')}</div>
+      <div class="tm-muted">按上下文选择：${presets || '未声明'}</div>`;
+
+    const over = st.tokens >= (st.triggerTokens ?? Infinity);
+    stateEl.innerHTML = `待总结 <b class="${over ? 'tm-ok' : ''}">${esc(st.tokens)}</b> / ${esc(st.triggerTokens ?? '?')} token`
+      + ` · ${esc(st.pendingMessages)} 条（楼层 ${esc(st.pendingFrom)}–${esc(st.lastMessageIndex)}）`
+      + ` · 已总结至 ${esc(st.summarizedUpTo)} · 已隐藏 ${esc(st.hiddenCount)} 条`
+      + (st.running ? ' · <span class="tm-muted">进行中…</span>' : '');
+
+    renderSummaryResult(resultEl);
+  }
+
+  function renderSummaryResult(resultEl) {
+    const r = lastSummaryReport ?? summarizer.getLast();
+    if (!r) { resultEl.innerHTML = '—'; return; }
+    if (r.error) {
+      resultEl.innerHTML = `<span class="tm-blocked">总结失败（不影响对话）：${esc(r.error)}</span>`;
+      return;
+    }
+    if (r.skipped) {
+      resultEl.innerHTML = `<span class="tm-muted">未总结：${esc(r.skipped)}</span>`;
+      return;
+    }
+    const hid = r.hidden;
+    const hideLine = !r.hidden
+      ? '未隐藏正文'
+      : (hid.ok
+        ? `已隐藏 ${esc(hid.count)} 条（${hid.via === 'slash' ? '酒馆命令' : '直接置位'}，楼层 ${esc(hid.from)}–${esc(hid.to)}）`
+        : `<span class="tm-blocked">隐藏未生效：${esc(hid.reason ?? '')}</span>`);
+    resultEl.innerHTML =
+      `<div>楼层 ${esc(r.coveredFrom)}–${esc(r.coveredTo)}（${esc(r.messageCount)} 条 · 约 ${esc(r.inputTokens)} token）`
+      + ` → 摘要记忆 #${esc(r.summaryMemoryId ?? '?')}`
+      + `${r.deduped ? '（复用既有摘要）' : ''}${r.truncated ? '（已按上限截断）' : ''}</div>`
+      + `<div class="tm-muted">${hideLine}</div>`;
   }
 
   // ---------- 模块折叠 (状态与其他偏好一起持久化) ----------
@@ -435,6 +508,15 @@ export function mountPanel({ metaStore, injector, extractor, log, bus }) {
     set('connection', snap.loaded ? `已连接 v${snap.meta?.version ?? '?'}` : '未连接');
     set('inject', (s.enabled && s.injectEnabled) ? '开' : '关');
     set('write', s.autoWriteEnabled ? `自动 · 每 ${s.autoWriteEveryNMessages} 条` : '关');
+
+    if (!s.summaryEnabled) {
+      set('summary', '关');
+    } else {
+      const st = summarizer.status();
+      const thr = st.triggerTokens;
+      set('summary', thr ? `${st.tokens}/${thr} token · 隐藏 ${st.hiddenCount} 条` : '阈值未载入');
+    }
+
     const eps = snap.meta?.endpoints ?? [];
     set('diagnostics', eps.length
       ? `${eps.filter((e) => metaStore.canCall(e.method, e.path).ok).length}/${eps.length} 端点可用`
@@ -452,6 +534,7 @@ export function mountPanel({ metaStore, injector, extractor, log, bus }) {
     renderContract();
     renderStatus();
     renderPreview();
+    renderSummary();
     updateActionButtons();
     renderModuleTags();
   }
@@ -473,6 +556,27 @@ export function mountPanel({ metaStore, injector, extractor, log, bus }) {
     if (previewBtn) {
       previewBtn.disabled = !loaded;
       previewBtn.title = loaded ? '' : '契约未载入 (未连接记忆服务)';
+    }
+
+    // 总结按钮: 可用性同样只看服务端对 /api/summarize 的声明
+    const sumBtn = document.getElementById('tm_run_summary');
+    if (sumBtn) {
+      const gate = metaStore.canCall('POST', '/api/summarize');
+      sumBtn.disabled = !loaded || !gate.ok;
+      sumBtn.title = !loaded
+        ? '契约未载入 (未连接记忆服务)'
+        : (gate.ok ? '不受阈值限制, 立即总结当前待总结区间' : gate.reason);
+    }
+    const clearBtn = document.getElementById('tm_clear_summary');
+    if (clearBtn) {
+      clearBtn.disabled = !loaded;
+      clearBtn.title = loaded ? '清空本聊天的总结边界记录 (不删除已写入的摘要记忆)' : '契约未载入';
+    }
+    const unhideBtn = document.getElementById('tm_unhide');
+    if (unhideBtn) {
+      const st = summarizer.status();
+      unhideBtn.disabled = st.hiddenCount <= 0;
+      unhideBtn.title = st.hiddenCount <= 0 ? '当前没有已隐藏的正文' : `把已隐藏的 ${st.hiddenCount} 条放回 prompt`;
     }
   }
 
@@ -520,6 +624,52 @@ export function mountPanel({ metaStore, injector, extractor, log, bus }) {
     }
   }
 
+  async function runSummary() {
+    const btn = document.getElementById('tm_run_summary');
+    if (btn) btn.disabled = true;
+    try {
+      const report = await summarizer.run('manual');
+      lastSummaryReport = report;
+      if (report.skipped) toast('warning', `未总结：${report.skipped}`);
+      else if (report.error) toast('error', `总结失败：${report.error}`);
+      else {
+        const hid = report.hidden;
+        const tail = hid?.ok ? `，已隐藏 ${hid.count} 条` : '';
+        toast('success', `总结完成：楼层 ${report.coveredFrom}–${report.coveredTo}${tail}`);
+      }
+      renderSummary();
+      updateActionButtons();
+      renderModuleTags();
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  async function runUnhide() {
+    const btn = document.getElementById('tm_unhide');
+    if (btn) btn.disabled = true;
+    try {
+      const r = await summarizer.unhideAll();
+      if (r.skipped) toast('warning', r.skipped);
+      else if (r.ok) toast('success', `已取消隐藏 ${r.count} 条（楼层 ${r.from}–${r.to}）`);
+      else toast('error', `取消隐藏失败：${r.reason ?? '未知原因'}`);
+      renderSummary();
+      updateActionButtons();
+      renderModuleTags();
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  async function runClearSummary() {
+    await summarizer.resetState();
+    lastSummaryReport = null;
+    toast('success', '本聊天的总结边界已重置（已写入的摘要记忆与隐藏状态未改动）');
+    renderSummary();
+    updateActionButtons();
+    renderModuleTags();
+  }
+
   // ---------- 装配 ----------
   buildStepSwitches();
   loadFields();
@@ -530,6 +680,9 @@ export function mountPanel({ metaStore, injector, extractor, log, bus }) {
   document.getElementById('tm_reload_meta')?.addEventListener('click', () => void reloadMeta());
   document.getElementById('tm_run_write')?.addEventListener('click', () => void runWrite());
   document.getElementById('tm_run_preview')?.addEventListener('click', () => void runPreview());
+  document.getElementById('tm_run_summary')?.addEventListener('click', () => void runSummary());
+  document.getElementById('tm_unhide')?.addEventListener('click', () => void runUnhide());
+  document.getElementById('tm_clear_summary')?.addEventListener('click', () => void runClearSummary());
   document.getElementById('tm_reset')?.addEventListener('click', () => {
     resetSettings();
     loadFields();
@@ -545,6 +698,12 @@ export function mountPanel({ metaStore, injector, extractor, log, bus }) {
       if (ev?.type === 'meta') renderAll();
       else if (ev?.type === 'inject') { lastInjectOutcome = ev.outcome; renderStatus(); }
       else if (ev?.type === 'write') { lastWriteReport = ev.report; renderStatus(); }
+      else if (ev?.type === 'summary') {
+        if (ev.report) lastSummaryReport = ev.report;
+        renderSummary();
+        renderModuleTags();
+        updateActionButtons();
+      }
     });
   }
 

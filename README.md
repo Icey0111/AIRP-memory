@@ -66,12 +66,13 @@ git clone https://github.com/Icey0111/AIRP-memory <SillyTavern>/public/scripts/e
 
 ## 怎么用
 
-面板里的开关按"注入"和"写入"两组：
+面板里的开关按"注入 / 写入 / 总结"三组：
 
 | 分组 | 做什么 |
 |---|---|
 | **注入** | 每轮生成前把相关记忆拼进 prompt（`/api/context`）。可设注入位置、深度、角色、topK、token 预算 |
 | **写入** | 把对话沉淀成记忆。默认**关闭**；开启后每 N 条角色消息自动跑一轮，也可随时手动触发 |
+| **总结** | 长对话压缩。累计估算 token 达阈值 → 压成一条摘要记忆 → 隐藏被覆盖的正文。默认**关闭** |
 | **手动** | 「立即抽取并写入」「检索预览」——后者能看到当前会注入哪几条、各自分数 |
 | **诊断** | 重新拉契约、查看端点能力与最近一次运行状态 |
 
@@ -85,6 +86,11 @@ git clone https://github.com/Icey0111/AIRP-memory <SillyTavern>/public/scripts/e
         → 关系立场（有向、带强度，可演化）
         → 画像重归纳（由当前生效的观察块归纳出常驻画像）
 ```
+
+长对话另有**总结**这一路（与前四步独立）：累计未总结正文的估算 token 达到阈值（默认 6000）时，
+把它压成一条 `type=summary` 的记忆，并把已被覆盖的正文用酒馆原生的 `/hide` 隐藏 ——
+隐藏只是移出 prompt，**不删除、随时可放回**。阈值、单批上限、摘要长度上限、保留条数全部由
+`/api/meta` 下发，前端不写死。取值依据见 [`docs/summarization.md`](docs/summarization.md)。
 
 ---
 
@@ -100,9 +106,10 @@ AIRP-memory/                  酒馆扩展本体（仓库根 = 扩展根）
 │   ├── settings.js           前端偏好 + 服务地址引导常量（唯一允许存在的本地配置）
 │   ├── api.js                HTTP 客户端（不含任何后端语义）
 │   ├── meta.js               /api/meta 的本地镜像 —— 前端一切的语义来源
-│   ├── session.js            chatId / characterId 解析、对话原文收集
+│   ├── session.js            chatId / characterId 解析、对话区间收集、隐藏楼层、per-chat 状态
 │   ├── injector.js           生成前注入闭环
 │   ├── extractor.js          写入闭环（四个抽取端点，逐步静默降级）
+│   ├── summarizer.js         总结闭环（累计 token → 压缩 → 隐藏已总结正文）
 │   ├── ui.js                 设置面板渲染与绑定
 │   ├── bus.js / log.js       事件总线、日志
 ├── check-static.mjs          静态一致性检查（不需要酒馆）
@@ -111,9 +118,9 @@ AIRP-memory/                  酒馆扩展本体（仓库根 = 扩展根）
 │
 ├── server/                   本地记忆服务（Node + Express + better-sqlite3）
 │   ├── src/api/              HTTP 层：routes / meta 契约端点 / cors
-│   ├── src/services/         业务层：写入、抽取、检索、画像、立场、遗忘
+│   ├── src/services/         业务层：写入、抽取、检索、画像、立场、总结、遗忘
 │   ├── src/domain/           constants.js —— 全项目唯一语义源
-│   ├── test/                 五套冒烟测试
+│   ├── test/                 六套冒烟测试
 │   └── config.default.json   配置模板
 │
 ├── db/                       表结构与迁移（schema.sql + migrations/001~004）
@@ -127,14 +134,14 @@ AIRP-memory/                  酒馆扩展本体（仓库根 = 扩展根）
 这是本项目的一条硬约束，也是它和多数扩展不一样的地方：
 
 ```
-server/src/domain/constants.js        ← 唯一定义处（枚举+标签、权重+公式、阈值、默认值、能力矩阵）
+server/src/domain/constants.js        ← 唯一定义处（枚举+标签、权重+公式、阈值、默认值、总结策略、能力矩阵）
         ↓ 派生
 GET /api/meta                         ← 前后端唯一契约
         ↓ 运行时载入
 前端 src/meta.js                      ← 镜像；未载入时所有访问器返回 null，调用方必须显式处理
 ```
 
-服务端内部（memoryService / retrievalService / forgetService / chunkService …）也都 `import`
+服务端内部（memoryService / retrievalService / forgetService / chunkService / summaryService …）也都 `import`
 同一份常量，所以**面板上展示的语义**与**后端实际执行的语义**是同一份数据，不会漂移。
 
 这条约束由测试钉死，不靠人工对齐：
@@ -150,7 +157,7 @@ GET /api/meta                         ← 前后端唯一契约
 ## 开发校验
 
 ```bash
-# 后端（五套冒烟测试，用内存库，不污染本地数据）
+# 后端（六套冒烟测试，用内存库，不污染本地数据）
 cd server && npm test
 
 # 前端静态一致性：HTML 的 id ↔ JS 选择器 ↔ 默认设置字段是否对得上（不需要酒馆）
@@ -164,8 +171,9 @@ node check-contract.mjs [baseUrl]        # 默认 http://127.0.0.1:7780
 
 | 文档 | 内容 |
 |---|---|
-| [`docs/api.md`](docs/api.md) | HTTP 契约全量说明；§12 是 `GET /api/meta` 契约描述 |
-| [`docs/frontend-v0.md`](docs/frontend-v0.md) | 扩展的安装、设置项、注入/写入时序、id 口径 |
+| [`docs/api.md`](docs/api.md) | HTTP 契约全量说明；§12 是 `GET /api/meta` 契约描述，§13 是 `POST /api/summarize` |
+| [`docs/summarization.md`](docs/summarization.md) | 长对话怎么总结：多少 token 一次、估算口径、隐藏正文的机制与取舍 |
+| [`docs/frontend-v0.md`](docs/frontend-v0.md) | 扩展的安装、设置项、注入/写入/总结时序、id 口径 |
 | [`docs/database-design-v1.md`](docs/database-design-v1.md) ~ [`v4`](docs/database-design-v4.md) | 结构层设计演进（一阶记忆 → 六要素 → 属性向量 → 立场） |
 
 ## 许可

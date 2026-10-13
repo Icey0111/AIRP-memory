@@ -23,6 +23,7 @@ import {
   MEMORY_TYPES, MEMORY_SCOPES, CHUNKABLE_ENTITY_TYPES, THRESHOLDS,
   RETRIEVAL_SCORING, FORGET_SCORING, FORGET_TABLES,
   RETRIEVAL_FALLBACK_DEFAULTS, ENDPOINTS,
+  SUMMARY_POLICY, TOKEN_ESTIMATION,
 } from '../src/domain/constants.js';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -185,6 +186,34 @@ check('注入段落顺序下发', meta.contextSections.length === 3
   && meta.contextSections[0].key === 'profile' && meta.contextSections[2].key === 'chunks');
 
 // ============================================================
+// 4b) 总结策略: 触发阈值与 token 系数必须与常量同源
+//     前端据此累计 token 并决定何时压缩, 所以这些数字不能在两端各存一份
+// ============================================================
+console.log('\n--- 总结策略同源 ---');
+check('summaryPolicy 与常量同源', eqArr(meta.summaryPolicy, SUMMARY_POLICY));
+check('token 估算系数下发 (前端按同一系数估算, 不写死 2)',
+  meta.scoring.tokenEstimation.charsPerToken === TOKEN_ESTIMATION.charsPerToken
+  && typeof meta.scoring.tokenEstimation.charsPerToken === 'number'
+  && meta.scoring.tokenEstimation.charsPerToken > 0,
+  JSON.stringify(meta.scoring.tokenEstimation));
+check('token 估算公式里的数字与 charsPerToken 一致 (不会两处各说一套)',
+  meta.scoring.tokenEstimation.formula.includes(String(meta.scoring.tokenEstimation.charsPerToken)));
+check('defaults.summary 的生效值与 summaryPolicy 同源',
+  meta.defaults.summary.triggerTokens === SUMMARY_POLICY.triggerTokens
+  && meta.defaults.summary.keepRecentMessages === SUMMARY_POLICY.keepRecentMessages
+  && meta.defaults.summary.maxSummaryChars === SUMMARY_POLICY.maxSummaryChars,
+  JSON.stringify(meta.defaults.summary));
+check('触发阈值自身落在合法区间内 (min <= trigger <= max)',
+  SUMMARY_POLICY.triggerTokens >= SUMMARY_POLICY.limits.min
+  && SUMMARY_POLICY.triggerTokens <= SUMMARY_POLICY.limits.max);
+check('上下文规模预设随规模单调不减 (前端原样展示, 不自作调整)',
+  meta.summaryPolicy.presets.every((p, i, a) => i === 0 || p.triggerTokens >= a[i - 1].triggerTokens),
+  JSON.stringify(meta.summaryPolicy.presets.map((p) => p.triggerTokens)));
+check('保留条数不小于 0 且单批上限不低于触发阈值',
+  SUMMARY_POLICY.keepRecentMessages >= 0
+  && SUMMARY_POLICY.maxBatchTokens >= SUMMARY_POLICY.triggerTokens);
+
+// ============================================================
 // 5) 能力标记随运行时变化
 // ============================================================
 console.log('\n--- 能力标记随客户端变化 ---');
@@ -232,6 +261,7 @@ const SAMPLES = {
   'GET /api/stances': [],
   'POST /api/forget': [{}],
   'POST /api/forget/restore': [{ table: 'memories', id: 1 }],
+  'POST /api/summarize': [{ chatId: 'chat001', text: 'ELARA: x' }],
 };
 
 check('meta.endpoints 与常量同源', eqArr(meta.endpoints, ENDPOINTS));

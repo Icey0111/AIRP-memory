@@ -99,10 +99,17 @@ export const RETRIEVAL_SCORING = {
 /** 检索默认值 (config.retrieval 覆盖不到时的兜底, 与 config.default.json 保持一致) */
 export const RETRIEVAL_FALLBACK_DEFAULTS = { topK: 8, tokenBudget: 1200 };
 
-/** token 估算口径: 前端展示预算时需知道后端怎么算的 */
+/**
+ * token 估算口径: 前端展示预算时需知道后端怎么算的。
+ * charsPerToken 是参数而非写死在文案里 —— 前端按同一个系数估算, 两端口径才不会漂移。
+ * (改成参数后, 调这个系数只需改一处, 文案会自动跟着变。)
+ */
+const CHARS_PER_TOKEN = 2;
+
 export const TOKEN_ESTIMATION = {
-  formula: '估算 token ≈ ⌈字符数 / 2⌉',
-  description: '中英混合的保守估算, 不是真实分词',
+  charsPerToken: CHARS_PER_TOKEN,
+  formula: `估算 token ≈ ⌈字符数 / ${CHARS_PER_TOKEN}⌉`,
+  description: '中英混合的保守估算, 不是真实分词; 前端累计与后端预算使用同一口径',
 };
 
 /** 注入组装的段落填充顺序 */
@@ -121,6 +128,56 @@ export const THRESHOLDS = {
   supersedeSimilarity: 0.85,
   /** 相似度度量 */
   similarityMetric: 'cosine',
+};
+
+// ============================================================
+// 总结策略 (摘要记忆层): 何时压缩、压到多长
+// ============================================================
+
+/**
+ * 长对话压缩策略。前端据此累计 token 并决定何时触发一次总结,
+ * 因此这些阈值属于"跨端语义" —— 只在后端定义一次, 由 /api/meta 下发,
+ * 前端不另存一份 (前端设置里的同名字段为 0 / -1 时表示"用这里的值")。
+ *
+ * 量纲统一走 TOKEN_ESTIMATION: token ≈ ⌈字符数 / charsPerToken⌉。
+ * 前端累计与后端预算共用同一系数, 才不会出现"前端以为还早、后端已经爆预算"。
+ */
+export const SUMMARY_POLICY = {
+  /** 未总结区间的累计估算 token 达到该值 => 触发一次总结 */
+  triggerTokens: 6000,
+  /** 低于该值不触发。碎片摘要信息密度低, 还会白占注入预算 */
+  minTokens: 1500,
+  /** 单批总结的输入上限: 超出部分留到下一批, 保证喂给 LLM 的 prompt 不撑爆上下文 */
+  maxBatchTokens: 12000,
+  /** 摘要正文长度上限 (字符)。后端据此约束 LLM 输出, 超长会截断 */
+  maxSummaryChars: 800,
+  /** 摘要记忆的默认 importance。比普通事件高: 一条摘要代表一整段的整体 */
+  defaultImportance: 0.6,
+  /**
+   * 总结后建议保留的最近消息条数 (不隐藏)。0 = 被总结的正文全部隐藏。
+   * 保留几条的理由: 模型对上下文末尾最敏感, 逐字保留最近几轮能显著降低答非所问。
+   */
+  keepRecentMessages: 6,
+  /** 触发方式标识 (目前只有一种; 前端据此选择累计逻辑) */
+  trigger: 'estimated-tokens',
+
+  /** 为什么取这个量级。前端原样展示, 免得两端各说一套 */
+  rationale:
+    '按本系统的估算口径, 典型中文角色扮演单条约 150-300 token, 一轮往返约 300-600 token; '
+    + '6000 token 大致是 20 条消息 / 10 轮往返, 接近"一小场戏"的粒度。'
+    + '此时单次总结的输入 (约 6000) 叠加系统提示与角色卡 (约 2000-4000) 与输出余量, '
+    + '在 16k 上下文的模型上仍安全; 8k 模型应下调, 32k 以上可上调。',
+
+  /** 按模型上下文规模给的选择建议 (前端原样展示, 不做二次加工) */
+  presets: [
+    { contextSize: 8192, triggerTokens: 3000, note: '固定开销占比大, 宁小勿大' },
+    { contextSize: 16384, triggerTokens: 6000, note: '默认量级, 兼顾粒度与安全' },
+    { contextSize: 32768, triggerTokens: 10000, note: '可按"一场戏"为单位总结' },
+    { contextSize: 131072, triggerTokens: 12000, note: '不建议再加: 再长摘要本身会失焦' },
+  ],
+
+  /** 阈值合法区间 (前端输入框钳制用; 也是后端接受的边界) */
+  limits: { min: 1000, max: 20000 },
 };
 
 // ============================================================
@@ -200,6 +257,7 @@ export const ENDPOINTS = [
   { method: 'POST', path: '/api/extract-attributes', summary: '三阶属性观察抽取', needsLlm: true, needsEmbedding: true, degrade: 'error', degradeNote: 'LLM 或 embedding 未配置时 400' },
   { method: 'POST', path: '/api/extract-stances', summary: '立场抽取与演化', needsLlm: true, needsEmbedding: false, degrade: 'error', degradeNote: 'LLM 未配置时 400' },
   { method: 'POST', path: '/api/profiles-derive', summary: '画像重归纳 (观察块 -> 生效画像)', needsLlm: true, needsEmbedding: false, degrade: 'error', degradeNote: '目标人物无生效观察块时短路返回空, 不触达 LLM (此时即便未配 LLM 也返回 200)' },
+  { method: 'POST', path: '/api/summarize', summary: '长对话压缩: 一段剧情 -> 一条摘要记忆', needsLlm: true, needsEmbedding: false, degrade: 'error', degradeNote: 'LLM 未配置时 400' },
 
   { method: 'POST', path: '/api/memories', summary: '手动写入一阶记忆', needsLlm: false, needsEmbedding: false, degrade: 'error', degradeNote: '不依赖任何外部能力' },
   { method: 'GET', path: '/api/memories', summary: '一阶记忆列表', needsLlm: false, needsEmbedding: false, degrade: 'error', degradeNote: '不传 chatId/characterId 时可见性退化为仅 scope=global' },

@@ -135,6 +135,57 @@
           </div>
         </section>
 
+        <!-- ============ 总结与压缩 ============ -->
+        <section class="tm-module" data-tm-module="summary">
+          <div class="tm-module-head" role="button" tabindex="0" aria-expanded="true">
+            <span class="tm-caret">▾</span>
+            <span class="tm-module-title">总结与压缩 · 长对话</span>
+            <span class="tm-module-tag" id="tm_tag_summary"></span>
+          </div>
+          <div class="tm-module-body">
+            <label class="checkbox_label" for="tm_summary_enabled">
+              <input id="tm_summary_enabled" type="checkbox">
+              <span>累计到阈值自动总结</span>
+            </label>
+            <label class="tm-row">
+              <span class="tm-label">触发阈值</span>
+              <input id="tm_summary_trigger" class="text_pole tm-num" type="number" min="0" max="20000" step="500">
+              <span class="tm-muted">估算 token</span>
+              <span class="tm-muted tm-placeholder-default" data-tm-default="summary.triggerTokens"></span>
+            </label>
+            <label class="tm-row">
+              <span class="tm-label">保留最近</span>
+              <input id="tm_summary_keep" class="text_pole tm-num" type="number" min="-1" max="100" step="1">
+              <span class="tm-muted">条不隐藏（<b>0 = 被总结的正文全部隐藏</b>；-1 = 用服务端建议）</span>
+            </label>
+            <label class="checkbox_label" for="tm_summary_hide">
+              <input id="tm_summary_hide" type="checkbox">
+              <span>总结后隐藏被覆盖的正文</span>
+            </label>
+            <div class="tm-hint">隐藏走酒馆原生的 <code>/hide</code>（等价于给楼层置 <code>is_system</code>）：这些消息不进 prompt，也不再计入累计 token，因此不会被重复总结。随时可用下面的「取消隐藏」放回。</div>
+
+            <div class="tm-subsection">
+              <div class="tm-subsection-title">服务端策略</div>
+              <div id="tm_summary_policy" class="tm-detail tm-muted">契约未载入</div>
+            </div>
+
+            <div class="tm-row">
+              <span class="tm-label">当前累计</span>
+              <span id="tm_summary_state" class="tm-detail tm-muted">—</span>
+            </div>
+
+            <div class="tm-row">
+              <span class="tm-label">操作</span>
+              <span class="tm-actions">
+                <input id="tm_run_summary" class="menu_button" type="button" value="立即总结">
+                <input id="tm_unhide" class="menu_button" type="button" value="取消隐藏">
+                <input id="tm_clear_summary" class="menu_button" type="button" value="重置总结边界">
+              </span>
+            </div>
+            <div id="tm_summary_result" class="tm-detail tm-muted">—</div>
+          </div>
+        </section>
+
         <!-- ============ 手动操作 ============ -->
         <section class="tm-module" data-tm-module="manual">
           <div class="tm-module-head" role="button" tabindex="0" aria-expanded="false">

@@ -13,6 +13,7 @@ import { createApi } from './src/api.js';
 import { createMetaStore } from './src/meta.js';
 import { createInjector } from './src/injector.js';
 import { createExtractor } from './src/extractor.js';
+import { createSummarizer } from './src/summarizer.js';
 import { createBus } from './src/bus.js';
 import { createLog } from './src/log.js';
 import { mountPanel } from './src/ui.js';
@@ -51,16 +52,21 @@ jQuery(async () => {
   const metaStore = createMetaStore(api, { bus, log });
   const injector = createInjector({ api, metaStore, getSettings, log, bus });
   const extractor = createExtractor({ api, metaStore, getSettings, log, bus });
+  const summarizer = createSummarizer({ api, metaStore, getSettings, log, bus });
 
-  mountPanel({ metaStore, injector, extractor, log, bus });
+  mountPanel({ metaStore, injector, extractor, summarizer, log, bus });
 
   // 每轮生成前注入记忆 (契约未载入时自动跳过, 不做任何猜测)
   injector.bind();
 
-  // 每收到一条角色消息计一次, 达到阈值触发一轮自动写入
-  eventSource.on(event_types.MESSAGE_RECEIVED, () => extractor.noteMessage());
+  // 每收到一条角色消息: 写入侧计数 + 总结侧检查累计 token 是否达阈值
+  eventSource.on(event_types.MESSAGE_RECEIVED, () => {
+    extractor.noteMessage();
+    summarizer.noteMessage();
+  });
 
-  // 切换聊天: 撤下旧注入, 重置计数 (记忆本身按 chatId 隔离, 无需清库)
+  // 切换聊天: 撤下旧注入, 重置写入计数
+  // (总结边界存在 chat_metadata 里, 随 chat 文件走, 切回来仍在, 无需重置)
   eventSource.on(event_types.CHAT_CHANGED, () => {
     injector.clear();
     extractor.reset();

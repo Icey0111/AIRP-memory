@@ -52,9 +52,10 @@ AIRP-memory/               ← 克隆后就是这个目录，即扩展目录
 │   ├── settings.js        前端偏好 + 引导常量  ← 唯一允许存在的本地配置
 │   ├── api.js             HTTP 客户端 (不含任何后端语义)
 │   ├── meta.js            /api/meta 的本地镜像  ← 前端一切的语义来源
-│   ├── session.js         chatId / characterId 解析 + 对话原文收集
+│   ├── session.js         chatId / characterId 解析 + 对话区间收集 / 隐藏楼层 / per-chat 状态
 │   ├── injector.js        注入闭环: GENERATION_AFTER_COMMANDS → /api/context
 │   ├── extractor.js       写入闭环: 四个抽取端点, 逐步静默降级
+│   ├── summarizer.js      总结闭环: 累计估算 token → /api/summarize → 隐藏已总结正文
 │   └── ui.js              设置面板渲染与绑定
 │
 ├── server/                本地记忆服务 (后端, 不被酒馆加载)
@@ -116,6 +117,11 @@ https://github.com/Icey0111/AIRP-memory
 | 写入 | 自动写记忆 | 默认**关**。开启后每 N 条角色消息触发一轮 |
 | 写入 | 取最近 N 条 / 字数上限 | 交给抽取端点的对话原文范围 |
 | 写入 | 参与写入的步骤 | 四个抽取步骤各自开关；不可用时开关会**禁用并显示原因** |
+| 总结 | 累计到阈值自动总结 | 默认**关**。开启后每收到一条角色消息检查一次累计估算 token |
+| 总结 | 触发阈值 | **填 0 = 用服务端建议**（当前 6000 估算 token），输入框显示服务端当前值 |
+| 总结 | 保留最近 N 条不隐藏 | **填 -1 = 用服务端建议**（当前 6）；**填 0 = 被总结的正文全部隐藏** |
+| 总结 | 总结后隐藏被覆盖的正文 | 走酒馆原生 `/hide`，随时可「取消隐藏」放回 |
+| 总结 | 立即总结 / 取消隐藏 / 重置总结边界 | 见 §5.4 |
 | 手动 | 立即抽取并写入 | 手动跑一轮写入 |
 | 手动 | 检索预览 | 跑一次 `/api/context` + `/api/retrieve`，列出命中（含类型标签与分数） |
 | 诊断 | 自检并载入契约 | 重新拉 `/api/meta` + `/api/status` |
@@ -163,6 +169,27 @@ GENERATION_AFTER_COMMANDS (dryRun 为真时跳过)
 
 后端有两套 id 体系，前两行是字符串、第三行是整数，不可混用（见 `api.md` §11.5）。
 
+### 5.4 总结时序（长对话压缩）
+
+```
+（自动：每收到一条角色消息检查  /  手动：点「立即总结」）
+  → 现算未总结区间（summarizedUpTo+1 .. 最后一条）内可见消息的字符数
+  → 换算成估算 token（系数取自服务端 scoring.tokenEstimation.charsPerToken）
+  → 未达阈值则返回；超过单批上限则只取区间前一段, 其余留到下一批
+  → POST /api/summarize
+  → 推进 summarizedUpTo
+  → 隐藏 [hiddenUpTo+1, 覆盖末端 - keepRecentMessages] → 推进 hiddenUpTo
+```
+
+- **阈值、下限、单批上限、摘要长度上限、建议保留条数、token 系数全部来自 `/api/meta`**，前端不写死任何一个数字。契约未载入时该功能不可用，并如实说明原因。
+- 状态存在**酒馆的 `chat_metadata`**（随 chat 文件走，切聊天/刷新/重启都不丢）；`chat_metadata` 不可用时退化为内存对象。
+- 隐藏优先调用酒馆原生命令（`/hide`，它会刷新 UI 上的 ghost 标记），拿不到执行器时退回直接置 `chat[i].is_system`。
+  失败只记日志，不影响对话。
+- 每次运行前做一次**边界归一化**：记录越界（聊天被编辑过）就重置边界并记警告，避免对错位的楼层动手。
+- 与写入侧同理，**失败只跳过、不打断对话**。
+
+完整取值依据、状态模型与调参建议见 [`summarization.md`](./summarization.md)。
+
 ---
 
 ## 6. 开发校验
@@ -208,9 +235,10 @@ cd server && npm test     # extract / chunks / stances / routes / meta 五套
 - 存的是酒馆自己的设置文件（`extension_settings` 下的 `tavernMemory` 键），随酒馆设置一起读写；删掉扩展目录不会丢设置，重装即恢复。
 - `ensureSettings()` 每次读取做 `{ ...DEFAULT_SETTINGS, ...已存值 }` 合并，**新增字段自动补默认值**，老配置不会因为少键而崩。
 - 「重置前端设置」只重置这一份偏好，**不触碰服务端任何记忆数据**。
-- 覆盖范围由 `check-static.mjs` 钉死：`DEFAULT_SETTINGS` 的每个键都必须在面板上有对应控件（当前 20 个），以后加字段忘了绑 UI 会直接测试失败。
+- 覆盖范围由 `check-static.mjs` 钉死：`DEFAULT_SETTINGS` 的每个键都必须在面板上有对应控件（当前 24 个），以后加字段忘了绑 UI 会直接测试失败。
 - 步骤开关是动态生成的，用事件委托绑定，同样即时落盘。
 - **模块折叠状态**（`uiCollapsed`）也存在这里：默认收起"写入 / 手动操作 / 诊断与契约"三个模块，你手动展开或收起后会记住，下次打开面板保持原样。它由面板自身读写、没有对应控件，因此在 `settings.js` 里显式登记在 `NO_UI_KEYS` 中（静态检查据此豁免"每个键都必须有控件"，同时校验白名单里的键真实存在）。
+- **总结边界不在这里**：`summarizedUpTo` / `hiddenUpTo` 是**每个聊天各自一份**的数据，存在 `chat_metadata` 里随 chat 文件走（见 §5.4）。放进 `extension_settings` 会变成全局一份，切聊天就串了。
 
 ### 8.2 密钥（不在前端）
 
@@ -238,3 +266,5 @@ cd server && npm test     # extract / chunks / stances / routes / meta 五套
 - 手动新建记忆的表单（用 `meta.enums` 渲染 `type` / `scope` 下拉）
 - 注入内容在聊天界面的可视化标记（哪几条进了 prompt）
 - 抽取结果跳转到源楼层
+- 分层摘要：对已有的多条 `summary` 再做一层"卷/章"级合并，避免长会话里摘要条数线性增长
+- 按叙事边界（而非纯 token 阈值）智能切分总结区间 —— 目前只按估算 token 与单批上限机械切
