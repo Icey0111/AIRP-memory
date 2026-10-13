@@ -134,24 +134,33 @@ export function createConfigApi({ filePath, defaults, rebuild }) {
     const sec = merged()[kind] ?? {};
     if (!sec.baseUrl) throw new Error(`${kind}.baseUrl 未配置 —— 先保存接口地址`);
     if (!sec.apiKey) throw new Error(`${kind}.apiKey 未配置 —— 先保存密钥`);
-    const url = `${String(sec.baseUrl).replace(/\/+$/, '')}/models`;
-    let res;
-    try {
-      res = await fetch(url, {
-        headers: { Authorization: `Bearer ${sec.apiKey}` },
-        signal: AbortSignal.timeout(10000),
-      });
-    } catch (err) {
-      throw new Error(`拉取模型列表失败: 无法访问 ${url} (${err.message})`);
+    // 兜底尝试两条路径: baseUrl 带不带 /v1 都试 (中转两种约定都有)。
+    // 都失败时把最后一个错误抛出 —— 若 DNS 都解析不到, 错误里会如实说, 用户能看出地址本身无效。
+    const base = String(sec.baseUrl).replace(/\/+$/, '');
+    const candidates = base.endsWith('/v1')
+      ? [`${base}/models`]
+      : [`${base}/v1/models`, `${base}/models`];
+    let lastErr = null;
+    for (const url of candidates) {
+      try {
+        const res = await fetch(url, {
+          headers: { Authorization: `Bearer ${sec.apiKey}` },
+          signal: AbortSignal.timeout(10000),
+        });
+        if (!res.ok) {
+          const body = await res.text().catch(() => '');
+          lastErr = new Error(`HTTP ${res.status}${body ? ` - ${body.slice(0, 200)}` : ''} (${url})`);
+          continue;
+        }
+        const data = await res.json().catch(() => null);
+        const list = Array.isArray(data?.data) ? data.data : Array.isArray(data?.models) ? data.models : [];
+        const ids = list.map((m) => (typeof m === 'string' ? m : (m?.id ?? m?.name))).filter(Boolean);
+        return [...new Set(ids)].sort();
+      } catch (err) {
+        lastErr = new Error(`无法访问 ${url} (${err.message})`);
+      }
     }
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      throw new Error(`拉取模型列表失败: HTTP ${res.status}${body ? ` - ${body.slice(0, 200)}` : ''}`);
-    }
-    const data = await res.json().catch(() => null);
-    const list = Array.isArray(data?.data) ? data.data : Array.isArray(data?.models) ? data.models : [];
-    const ids = list.map((m) => (typeof m === 'string' ? m : (m?.id ?? m?.name))).filter(Boolean);
-    return [...new Set(ids)].sort();
+    throw new Error(`拉取模型列表失败: ${lastErr?.message ?? '未知错误'}`);
   }
 
   return { view, update, describe, listModels };
