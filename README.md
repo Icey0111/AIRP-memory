@@ -95,6 +95,9 @@ git clone https://github.com/Icey0111/AIRP-memory <SillyTavern>/public/scripts/e
 
 共同底线：**只要服务离开回环，`server.token` 就不是可选项**；令牌可随时更换撤销。
 
+> 提示：记忆服务是独立的 Node 进程（`cd server && npm start`），与酒馆本体无关。
+> TauriTavern 用户即使系统没装 Node，也可以直接用 TauriTavern 自带的 Node 运行时来启动它。
+
 ---
 
 ## 怎么用
