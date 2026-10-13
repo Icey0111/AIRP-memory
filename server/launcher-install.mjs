@@ -19,9 +19,9 @@ const vbs = [
   'Set sh = CreateObject("WScript.Shell")',
   `sh.CurrentDirectory = ${q(SERVER_DIR)}`,
   // 记忆服务: 隐藏窗口 (样式 0), 不等待; 若服务已在跑, 新实例会因端口占用静默退出, 无副作用
-  `sh.Run ${q(`${q(NODE_EXE)} ${q(path.join(SERVER_DIR, 'watch-tavern.mjs'))}`)}, 0, False`,
+  `sh.Run """${NODE_EXE}"" ""${path.join(SERVER_DIR, "watch-tavern.mjs")}""", 0, False`,
   'WScript.Sleep 800',
-  `sh.Run ${q(q(TAURI_EXE))}, 1, False`,
+  `sh.Run """${TAURI_EXE}""", 1, False`,
   '',
 ].join('\r\n');
 
