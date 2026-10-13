@@ -89,6 +89,27 @@ const badCollapse = collapseKeys.filter((k) => !htmlModules.includes(k));
 say(collapseKeys.length > 0 && badCollapse.length === 0,
   `默认折叠的模块名都有效 (${collapseKeys.join(', ')})${badCollapse.length ? ` — 无效: ${badCollapse.join(', ')}` : ''}`);
 
+// ---------- 注入形态: 两个开关键必须在面板上, 且前端不得硬编码服务端的表格语义 ----------
+// 表格的段落标题/列名只在 server/src/domain/constants.js 定义一次, 前端一律读 meta.injectionTables。
+// 一旦有人图省事把服务端的表头/列名抄进前端, 这里立刻报错 —— 否则"语义同源"会悄悄破功。
+say(htmlIds.has('tm_inject_tables') && htmlIds.has('tm_inject_stances'),
+  '注入形态的两个开关在面板上存在 (#tm_inject_tables / #tm_inject_stances)');
+
+const FORBIDDEN_LITERALS = [
+  '【角色画像】', '【关系立场】', '【关键实体】', '【前情提要】',
+  '【事件时间线】', '【相关记忆】', '【相关细节】',
+  '持方', '因果标注', '表露', '速写', '时间节点',
+];
+const frontFiles = ['settings.html', 'src/ui.js', 'src/settings.js', 'src/injector.js'];
+const hardcoded = [];
+for (const rel of frontFiles) {
+  const src = fs.readFileSync(path.join(dir, rel), 'utf-8');
+  for (const lit of FORBIDDEN_LITERALS) if (src.includes(lit)) hardcoded.push(`${rel} 含 ${lit}`);
+}
+say(hardcoded.length === 0,
+  `前端未硬编码注入表格的段落标题/列名 (扫描 ${frontFiles.length} 文件 × ${FORBIDDEN_LITERALS.length} 字面量)`
+  + `${hardcoded.length ? ` — 命中: ${hardcoded.join('; ')}` : ''}`);
+
 // ---------- 对酒馆模块的相对导入路径 ----------
 // 扩展的 HTTP 挂载点固定为 /scripts/extensions/third-party/<扩展目录>/ , 与磁盘安装位置无关。
 // 因此对酒馆模块的相对导入必须**刚好**解析到 /script.js 或 /scripts/extensions.js:

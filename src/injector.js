@@ -43,6 +43,9 @@ export function createInjector({ api, metaStore, getSettings, log, bus = null })
     if (Number(s.retrievalTopK) > 0) payload.topK = Number(s.retrievalTopK);
     if (Number(s.retrievalTokenBudget) > 0) payload.tokenBudget = Number(s.retrievalTokenBudget);
     if (Number(s.digestMaxTokens) > 0) payload.digestMaxTokens = Number(s.digestMaxTokens);
+    // 注入形态: 用户偏好显式下发; 关掉即走服务端的 bullet 回退路径 (无损, 不改任何数据)
+    payload.injectTables = s.injectTables !== false;
+    payload.injectStances = s.injectStancesSection !== false;
     return payload;
   }
 

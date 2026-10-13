@@ -141,6 +141,35 @@ if (reachable) {
     Number.isFinite(sp?.maxBatchTokens) && sp.maxBatchTokens > 0);
 
   // ============================================================
+  // 4c) 注入表格契约: 前端只读, 段落标题/列名/预算一律服务端下发
+  // ============================================================
+  console.log('\n--- 注入表格契约 ---');
+  const it = m.injectionTables;
+  check('injectionTables 已下发', it !== null && typeof it === 'object');
+  check('七段注入顺序 (profile,stances,entities,digest,timeline,memories,chunks)',
+    (m.contextSections ?? []).map((s) => s.key).join(',')
+      === 'profile,stances,entities,digest,timeline,memories,chunks',
+    (m.contextSections ?? []).map((s) => s.key).join(','));
+  check('表格段都有服务端下发的段落标题 (前端不硬编码)',
+    ['profile', 'stances', 'entities', 'timeline', 'memories', 'chunks']
+      .every((k) => typeof it?.headers?.[k] === 'string' && it.headers[k].length > 0),
+    JSON.stringify(Object.keys(it?.headers ?? {})));
+  check('常驻段独立预算齐备',
+    ['profile', 'stances', 'entities', 'timeline']
+      .every((k) => Number.isFinite(it?.budgets?.[k]) && it.budgets[k] > 0),
+    JSON.stringify(it?.budgets));
+  check('规模防线的行数/宽度上限齐备',
+    ['profileRows', 'stanceRows', 'entityRows', 'timelineRows', 'cellMaxWidth']
+      .every((k) => Number.isFinite(it?.limits?.[k]) && it.limits[k] > 0),
+    JSON.stringify(it?.limits));
+  check('立场显示规则齐备 (二阶语义压进一列)',
+    typeof it?.stanceDisplay?.plainLabel === 'string'
+    && typeof it?.stanceDisplay?.emptyBasis === 'string',
+    JSON.stringify(it?.stanceDisplay));
+  check('复现计数前缀随契约下发',
+    typeof it?.recurrenceMark === 'string' && it.recurrenceMark.length > 0, String(it?.recurrenceMark));
+
+  // ============================================================
   // 6) 实际调用: /api/context 可用且形状符合预期
   // ============================================================
   console.log('\n--- 实测 /api/context ---');
@@ -155,6 +184,27 @@ if (reachable) {
     check('/api/context 的 tokenBudget 等于契约下发的默认值',
       ctx.tokenBudget === store.getDefaults().retrieval.tokenBudget,
       `响应 ${ctx.tokenBudget} vs 契约 ${store.getDefaults().retrieval.tokenBudget}`);
+    check('/api/context 默认走表格形态 (tables / mixed)',
+      ctx.injectionMode === 'tables' || ctx.injectionMode === 'mixed', String(ctx.injectionMode));
+    check('/api/context 上报表格化与立场段开关状态',
+      typeof ctx.tablesEnabled === 'boolean' && typeof ctx.stancesEnabled === 'boolean',
+      JSON.stringify({ tables: ctx.tablesEnabled, stances: ctx.stancesEnabled }));
+
+    // 开关关闭: 必须走服务端的无损回退路径, 而不是让前端自己拼
+    const bullet = await api.context({
+      query: '测试查询', chatId: 'contract-check', characterId: '测试角色', injectTables: false,
+    });
+    check('injectTables=false -> injectionMode=bullets (走 bullet 回退)',
+      bullet.injectionMode === 'bullets', String(bullet.injectionMode));
+    check('回退后不再出现对齐表的分隔行 (确实换成了 bullet)',
+      !/^-{3,}/m.test(String(bullet.text ?? '')), String(bullet.text ?? '').slice(0, 120));
+
+    const noStance = await api.context({
+      query: '测试查询', chatId: 'contract-check', characterId: '测试角色',
+      injectTables: true, injectStances: false,
+    });
+    check('injectStances=false -> 立场段开关状态为关',
+      noStance.stancesEnabled === false, String(noStance.stancesEnabled));
   } catch (err) {
     check('/api/context 可调用', false, err.message);
   }

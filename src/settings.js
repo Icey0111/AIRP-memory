@@ -33,11 +33,17 @@ export const DEFAULT_SETTINGS = {
   injectDepth: 4,                // 仅 in_chat 生效
   retrievalTopK: 0,              // 0 = 用服务端默认
   retrievalTokenBudget: 0,       // 0 = 用服务端默认
-  // 【前情提要】(已总结摘要链) 的独立预算。它不参与相似度打分、也不占上面的检索预算,
+  // 「前情提要」(已总结摘要链) 的独立预算。它不参与相似度打分、也不占上面的检索预算,
   // 否则长对话里摘要会被"当前更像"的记忆挤掉, 而被隐藏的剧情就彻底没了。
   digestMaxTokens: 0,            // 0 = 用服务端默认
   queryMessages: 1,
   queryMaxChars: 500,
+
+  // ---- 注入形态 (表格由服务端渲染, 这两个开关只决定用不用) ----
+  // 关闭即走服务端的 bullet 回退路径, 信息不丢 (原文一字未删, 只是不再对齐成表)。
+  // 表格的列名/行数上限/预算/阈值一律由 /api/meta 的 injectionTables 下发, 前端不复制。
+  injectTables: true,            // 表格化注入 (画像/立场/关键实体/时间线/检索行)
+  injectStancesSection: true,    // 「关系立场」常驻段 (角色之间的关系与态度)
 
   // ---- 写入 ----
   autoWriteEnabled: false,

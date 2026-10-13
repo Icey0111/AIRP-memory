@@ -122,17 +122,148 @@ export const TOKEN_ESTIMATION = {
 };
 
 /**
- * 注入组装的段落填充顺序。
- * 前两段是"常驻"的: 不参与相似度打分, 也不会被检索预算挤掉 ——
- *   画像回答"角色是谁", 前情提要回答"到现在为止发生了什么"。
+ * 注入组装的段落填充顺序 (即实际拼接顺序)。
+ * 前五段是"常驻"的: 不参与相似度打分, 也不会被检索预算挤掉 ——
+ *   画像回答"角色是谁", 立场回答"谁对谁什么态度", 关键实体回答"反复出现的空间/人物是什么",
+ *   前情提要回答"到现在为止发生了什么", 时间线回答"最近的事件按什么因果顺序发生"。
  * 后两段是"按需"的: 与当前轮 query 相关的记忆与细节, 按打分填预算。
+ *
+ * 常驻段各自走独立预算 (见 INJECTION_TABLES.budgets), 不与检索段互相挤占。
  */
 export const CONTEXT_SECTIONS = [
-  { order: 1, key: 'profile', label: '角色画像', description: '常驻保底, 预算外优先保证' },
-  { order: 2, key: 'digest', label: '前情提要', description: '按楼层顺序拼接的摘要链, 常驻且不参与相似度打分' },
-  { order: 3, key: 'memories', label: '相关记忆', description: 'FTS 召回 (已排除摘要), 按打分顺序填预算' },
-  { order: 4, key: 'chunks', label: '相关细节', description: '向量召回的观察块' },
+  { order: 1, key: 'profile', label: '角色画像', description: '常驻; 类别/条目/内容 三列, 由观察块归纳的条目标 ※' },
+  { order: 2, key: 'stances', label: '关系立场', description: '常驻; 当前聊天生效立场的有向边清单, 表露列承载二阶语义' },
+  { order: 3, key: 'entities', label: '关键实体', description: '常驻限量; 人物/地点/物品/组织的规范速写与复现计数' },
+  { order: 4, key: 'digest', label: '前情提要', description: '按楼层顺序拼接的摘要链, 常驻且不参与相似度打分' },
+  { order: 5, key: 'timeline', label: '事件时间线', description: '常驻限量; 以时间节点为锚的事件邻接视图, 因果边标注' },
+  { order: 6, key: 'memories', label: '相关记忆', description: 'FTS 召回 (已排除摘要), 按打分顺序填预算' },
+  { order: 7, key: 'chunks', label: '相关细节', description: '向量召回的观察块' },
 ];
+
+// ============================================================
+// 注入表格化 (docs/injection-tables.md)
+// ============================================================
+//
+// 把注入文本从"平铺 bullet 行"升级为结构化表格: 行的组织方式变了, 通道不变
+// (仍是常驻 + 检索 top-k), 结构层不动 (记忆数据早已在库中, 这是纯渲染层)。
+//
+// 跨端语义: 段落标题、行数上限、各段预算、立场显示规则都在这里定义一次,
+// 经 /api/meta 下发; 前端只读 meta 并展示, 不另存一份, 也不出现列名/阈值字面量。
+export const INJECTION_TABLES = {
+  /** 总开关 (前端 injectTables 关掉即回到全量 bullet 路径, 无损可逆) */
+  enabled: true,
+  /** 输出形态: 常驻层对齐纯文本 (内容短且稳定, 对齐全开销值得); 检索层紧凑 markdown 行 (行多且每轮变化) */
+  format: { resident: 'aligned', retrieved: 'markdown' },
+  /**
+   * 各段标题。后端渲染与前端展示同源, 避免"文档一种写法、代码另一种写法"。
+   * stances 段是新内容注入 (立场原本完全不进 prompt), 可单独开关。
+   */
+  headers: {
+    profile: '【角色画像】',
+    stances: '【关系立场】',
+    entities: '【关键实体】',
+    timeline: '【事件时间线】',
+    memories: '【相关记忆】',
+    chunks: '【相关细节】',
+  },
+  /** 规模防线: 防表格爆炸 (超限截行, 不截列) */
+  limits: {
+    profileRows: 40,
+    stanceRows: 20,
+    entityRows: 15,
+    timelineRows: 12,
+    /** 单元格截断 (显示宽, 中文按 2 计); 0 = 不截断 */
+    cellMaxWidth: 60,
+  },
+  /** 常驻段各自独立的 token 预算 (与检索 tokenBudget 分开, 互不挤占) */
+  budgets: {
+    profile: 600,
+    stances: 400,
+    entities: 400,
+    timeline: 500,
+  },
+  /** 强度显示三档分界: < low 低, < high 中, 其余高 (避免 0.57 这种噪声数字) */
+  intensityBands: { low: 0.34, high: 0.67 },
+  intensityLabels: { low: '低', mid: '中', high: '高' },
+  /**
+   * 立场"表露"列的拼装规则 —— 一列承载三个二阶布尔维度, 不爆列数:
+   *   displayed_type 非空 -> 表面{displayed_type}, 否则即本心
+   *   is_public = 0       -> 前缀 隐秘·
+   *   target_aware = 0    -> 后缀 ·对方不知
+   */
+  stanceDisplay: {
+    hiddenPrefix: '隐秘·',
+    disguisedPrefix: '表面',
+    plainLabel: '即本心',
+    unawareSuffix: '·对方不知',
+    emptyBasis: '——',
+  },
+  /** 复现计数前缀 (L2 折叠链头专用: ×3 = 该行为被反复观察到 3 次) */
+  recurrenceMark: '×',
+  /**
+   * 【事件时间线】的事件间因果标注 (§3.4)。
+   * 每条 event_links 边只渲染一次 (渲染在"它是谁的成因/前承"那一行), 避免同一条边出现两遍:
+   *   caused    入边 -> ← 起因   | led_to 出边 -> → 引出
+   *   preceded  入边 -> ⇠ 前承   | contradicts 双向 -> ⇄ 矛盾
+   */
+  linkLabels: {
+    caused: '← 起因',
+    led_to: '→ 引出',
+    preceded: '⇠ 前承',
+    contradicts: '⇄ 矛盾',
+  },
+  /** 时间线单元格式 (§3.4): 节点锚点 = label + seqMark + seq; 无时间节点的事件给未定时占位 */
+  timeline: {
+    seqMark: '#',
+    /** 无 time_id 的事件显示为这个锚点 (占位, 保住对齐与分组) */
+    untimedLabel: '未定时',
+    /** 章节只在切换时随锚点出现一次, 形如 "第三章 / 第三夜, 暴雨 #7" */
+    chapterSep: ' / ',
+    /** 因果列多条边之间的分隔符 */
+    linkSep: '; ',
+    /** 事件注记来源优先级: 只写事件独有信息 (结果/经过), 不复述时间/人物/地点 (§4.6) */
+    noteSources: ['result_text', 'process'],
+    notePrefix: '〔',
+    noteSuffix: '〕',
+    /** 参与者角色等于该值时省略括号注记 (默认角色无需重复标注) */
+    roleDefault: '参与者',
+  },
+  /** 【关键实体】表 (§4.2): 静态空间的"规范描述"住处, 排序依据 = 被事件引用的度数 */
+  entities: {
+    /** 收录的实体类型 (与 attribute_chunks.entity_type 的取值域一致) */
+    types: ['person', 'location', 'item', 'org'],
+    kindLabels: { person: '人物', location: '地点', item: '物品', org: '组织' },
+    /** 各类型实体的表名与展示列 (只读查询用, 避免 SQL 里散落字面量) */
+    sources: {
+      person: { table: 'people', idCol: 'id' },
+      location: { table: 'locations', idCol: 'id' },
+      item: { table: 'items', idCol: 'id' },
+      org: { table: 'orgs', idCol: 'id' },
+    },
+    /** 时间线窗口内的引用额外加权: score = (总度数 + 窗口内度数) × 观察块最高 importance */
+    windowWeight: 2,
+    /** 无别名 / 无速写时的占位符 */
+    noAlias: '——',
+    emptySketch: '——',
+    /** 速写内容 (含链头观察) 之间用该符号连接 */
+    sketchSep: '; ',
+  },
+  /**
+   * 跨段去重 (L3): 画像表与立场表重叠的"态度"类条目以立场表为准 ——
+   * 立场表带强度/表露/依据, 信息更全, 画像里再写一遍只是重复占 token。
+   */
+  dedupe: {
+    profileStanceOverlap: true,
+    /** 判定为"态度类"的画像类别 (自由字符串约定, 与 ASPECT_SUGGESTIONS.person 一致) */
+    profileCategory: 'relationship',
+  },
+  /** 行内首次出现时的速写上限 (显示宽) —— 同一名实在一次注入中最多全量描述一次 */
+  sketchMaxWidth: 12,
+  /** 由观察块归纳 (非人工设定) 的画像条目行尾标记, 供人工核对 */
+  derivedMark: '※',
+  /** 表格渲染异常时的退化路径 (永远不断供) */
+  fallbackOnError: 'bullets',
+};
 
 // ============================================================
 // 阈值 (防吃书)
@@ -314,8 +445,8 @@ export const ENDPOINTS = [
   { method: 'GET', path: '/api/status', summary: 'schema 版本与各表行数 (自检)', needsLlm: false, needsEmbedding: false, degrade: 'error', degradeNote: '不依赖任何外部能力' },
   { method: 'GET', path: '/api/meta', summary: '契约描述 (本端点): 枚举/权重/阈值/默认值/能力依赖', needsLlm: false, needsEmbedding: false, degrade: 'error', degradeNote: '不依赖任何外部能力' },
 
-  { method: 'POST', path: '/api/context', summary: '注入组装, 前端每轮生成前的主入口', needsLlm: false, needsEmbedding: false, degrade: 'silent', degradeNote: '未配 embedding 时无【相关细节】段, 仍返回画像与 FTS 记忆' },
-  { method: 'POST', path: '/api/retrieve', summary: '三路召回原始结果 (调试用)', needsLlm: false, needsEmbedding: false, degrade: 'silent', degradeNote: '未配 embedding 时响应无 chunkHits 字段' },
+  { method: 'POST', path: '/api/context', summary: '注入组装, 前端每轮生成前的主入口', needsLlm: false, needsEmbedding: false, degrade: 'silent', degradeNote: '未配 embedding 或 embedding 服务故障时无【相关细节】段 (故障原因经 chunkError 字段上报), 仍返回画像与 FTS 记忆' },
+  { method: 'POST', path: '/api/retrieve', summary: '三路召回原始结果 (调试用)', needsLlm: false, needsEmbedding: false, degrade: 'silent', degradeNote: '未配 embedding 时响应无 chunkHits 字段; embedding 服务故障时返回 chunkError 而非 400' },
 
   { method: 'POST', path: '/api/extract', summary: '二阶六要素抽取 (人物/地点/时间点/事件/因果边)', needsLlm: true, needsEmbedding: false, degrade: 'error', degradeNote: 'LLM 未配置时 400' },
   { method: 'POST', path: '/api/extract-attributes', summary: '三阶属性观察抽取', needsLlm: true, needsEmbedding: true, degrade: 'error', degradeNote: 'LLM 或 embedding 未配置时 400' },

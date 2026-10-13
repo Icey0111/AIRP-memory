@@ -114,6 +114,22 @@ const r1 = await extractAttributes(db, {
 });
 check('抽取落库 3 块', r1.chunks.length === 3, JSON.stringify(r1.chunks.map((c) => c.aspect)));
 check('item 观察被跳过并计数', r1.skipped === 1);
+
+// LLM 在 JSON 前后加散文 (围栏外还有话) 也能容错 —— parseJsonLoose 统一口径
+const llmProse = createLlmClient({
+  provider: 'mock',
+  mockResponse: '好的, 以下是抽取结果:\n```json\n'
+    + JSON.stringify({
+      observations: [
+        { entity_type: 'person', entity_name: '艾拉', aspect: 'speech', content: '艾拉说话简短', importance: 0.5 },
+      ],
+    })
+    + '\n```\n希望对你有帮助。',
+});
+const rProse = await extractAttributes(db, { llm: llmProse, embed, chatId: 'chat001', text: '(mock)' });
+check('JSON 前后有散文/围栏 -> 仍正常解析落库 (parseJsonLoose)',
+  rProse.chunks.length === 1 && rProse.chunks[0].aspect === 'speech',
+  JSON.stringify(rProse));
 check('别名归并: 精灵游侠 -> 艾拉 (同实体)', r1.chunks[0].entityName === '艾拉' && r1.chunks[1].entityName === '艾拉');
 check('块带 embedding_model', db.prepare('SELECT embedding_model m FROM attribute_chunks').all()
   .every((r) => r.m === 'mock-bigram'));

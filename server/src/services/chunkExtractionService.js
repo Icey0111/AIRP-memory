@@ -1,6 +1,7 @@
 // 三阶抽取管线: 对话文本 -> LLM 属性观察抽取 -> embedding -> supersedes 判定 -> 落库
 // 画像重归纳: 当前生效观察块 -> LLM 归纳 -> character_profiles (带溯源)
 import { findOrCreatePerson, findOrCreateLocation } from './entityService.js';
+import { parseJsonLoose } from './extractionService.js';
 import { addChunk, currentChunks } from './chunkService.js';
 import { upsertProfileEntry } from './profileService.js';
 import { cosine, unpackVector } from './embeddingClient.js';
@@ -13,7 +14,7 @@ import {
 const SUPERSEDE_THRESHOLD = THRESHOLDS.supersedeSimilarity;
 const CHUNKABLE = new Set(CHUNKABLE_ENTITY_TYPES);
 
-const EXTRACT_SYSTEM = `你是角色扮演对话的属性观察抽取器。从给定对话中抽取关于人物/地点的细粒度属性观察。
+export const EXTRACT_SYSTEM = `你是角色扮演对话的属性观察抽取器。从给定对话中抽取关于人物/地点的细粒度属性观察。
 只抽取对话中明确表现或陈述的内容, 不要推测, 不要复述剧情事件本身(那是另一套流程的事)。
 严格输出 JSON, 不要输出任何其他文字:
 {
@@ -27,6 +28,12 @@ const EXTRACT_SYSTEM = `你是角色扮演对话的属性观察抽取器。从�
     }
   ]
 }
+补充规则:
+- 反复出现的日常行为是**观察**, 不是事件: "又去小卖部"、"照例先倒杯酒"、"每次见面都先嘲讽一句"
+  这类内容写成 aspect=habit 的观察 (它表达的是稳定习惯, 强于一次性事件)。
+- 同一条观察在不同时间反复出现时, 每次都照原样抽出来即可 (不要自己合并、不要加"又一次"之类的措辞):
+  写入管线会按相似度把它们折叠成一条链, 复现次数本身就是"这是稳定行为模式"的证据。
+- 环境/氛围的**稳定**特征 (气味、光线、陈设) 也归 aspect=scene / atmosphere —— 它们会被归一成地点的一次速写。
 没有可抽取内容时输出 {"observations": []}`;
 
 const DERIVE_SYSTEM = `你是角色画像归纳器。给定一个角色的若干条属性观察(均为当前生效), 归纳为稳定的画像键值对。
@@ -34,10 +41,9 @@ const DERIVE_SYSTEM = `你是角色画像归纳器。给定一个角色的若干
 严格输出 JSON:
 {"entries": [{"category": "维度分类", "key": "属性名", "value": "归纳结果"}]}`;
 
-function parseJson(text) {
-  const cleaned = String(text).replace(/^```(?:json)?\s*|\s*```$/g, '').trim();
-  return JSON.parse(cleaned);
-}
+// JSON 解析统一用 parseJsonLoose (extractionService): 剥围栏 + 截取首尾大括号,
+// LLM 在 JSON 前后加散文也能容错 —— 三个抽取器口径一致, 不再各写一份。
+const parseJson = parseJsonLoose;
 
 // ---------- 属性观察抽取 ----------
 export async function extractAttributes(db, { llm, embed, chatId, text, sourceMessageIds = [] }) {

@@ -48,6 +48,18 @@ function handleAsync(fn) {
   };
 }
 
+// 统一 JSON 错误响应: body 解析失败 (非法 JSON) / 超 limit 也走 {ok:false} 口径,
+// 否则 express 默认错误处理返回 HTML 错误页, 前端 res.json() 直接崩。
+// 用法: 挂在 express.json 与 router 之后 (app.use(jsonErrorHandler))。
+export function jsonErrorHandler(err, req, res, next) {
+  if (res.headersSent) return next(err);
+  const status = err?.type === 'entity.too.large' ? 413 : 400;
+  res.status(status).json({ ok: false, error: `请求体解析失败: ${err.message}` });
+}
+
+// 列表端点的 limit 上限: 防一次性全表拉取 (本地服务无鉴权, 大结果集也会拖慢注入轮)
+const MAX_LIST_LIMIT = 200;
+
 // 能力判定: 客户端"存在" 且 "配置完整"。
 // 只判断存在性会把"客户端在但未配置"误判为可用, 使本该静默降级的端点抛 400,
 // 与 /api/meta 中 degrade='silent' 的声明矛盾 —— 前后端语义必须一致。
@@ -106,7 +118,7 @@ export function createRouter(db, { llm = null, embed = null, retrieval = {}, run
       memories: listMemories(db, {
         chatId, characterId, scope, type,
         includeInactive: includeInactive === '1',
-        limit: Number(limit) || 50,
+        limit: Math.min(Number(limit) || 50, MAX_LIST_LIMIT),
         offset: Number(offset) || 0,
       }),
     });
@@ -167,14 +179,20 @@ export function createRouter(db, { llm = null, embed = null, retrieval = {}, run
     // 前情提要与相似度召回是两条独立通道, 调试时也要能看到它实际会注入什么
     const out = { ok: true, match, hits, digest: buildDigest(db, { chatId, maxTokens: digestMaxTokens }) };
     if (embedIfUsable && query && withChunks !== false) {
-      const { hits: chunkHits } = await searchChunks(db, embedIfUsable, { query, chatId, topK: k });
-      out.chunkHits = chunkHits;
+      // embedding 服务故障 (超时/网关错误) 不应把调试端点打成 400:
+      // 与 /api/context 同口径 —— 静默丢掉向量召回, 如实上报错误
+      try {
+        const { hits: chunkHits } = await searchChunks(db, embedIfUsable, { query, chatId, topK: k });
+        out.chunkHits = chunkHits;
+      } catch (err) {
+        out.chunkError = err.message;
+      }
     }
     res.json(out);
   }));
 
   router.post('/api/context', handleAsync(async (req, res) => {
-    const { query, chatId, characterId, topK, tokenBudget, digestMaxTokens } = req.body ?? {};
+    const { query, chatId, characterId, topK, tokenBudget, digestMaxTokens, injectTables, injectStances } = req.body ?? {};
     res.json({
       ok: true,
       ...(await assembleContext(db, embedIfUsable, {
@@ -183,6 +201,9 @@ export function createRouter(db, { llm = null, embed = null, retrieval = {}, run
         tokenBudget: Number(tokenBudget) || defaultTokenBudget,
         // 0 / 缺省 = 用服务端策略默认值 (与 topK / tokenBudget 同一约定)
         digestMaxTokens: Number(digestMaxTokens) > 0 ? Number(digestMaxTokens) : null,
+        // 表格化总开关与立场段开关: 缺省 = 用服务端默认 (INJECTION_TABLES.enabled), 显式 false 才关
+        injectTables: injectTables === false ? false : null,
+        injectStances: injectStances === false ? false : null,
       })),
     });
   }));

@@ -7,7 +7,7 @@ import {
   findEventByTitle, createEvent, addEventParticipant, addEventLink, addEntityRef,
 } from './entityService.js';
 
-const SYSTEM_PROMPT = `你是角色扮演剧情的要素抽取器。从剧情文本中抽取结构化要素, 严格输出 JSON, 不要输出任何其他文字。
+export const SYSTEM_PROMPT = `你是角色扮演剧情的要素抽取器。从剧情文本中抽取结构化要素, 严格输出 JSON, 不要输出任何其他文字。
 
 输出格式:
 {
@@ -31,7 +31,21 @@ const SYSTEM_PROMPT = `你是角色扮演剧情的要素抽取器。从剧情文
 - 没有内容的字段给空字符串/空数组/null
 - person_type: 用户扮演的主角为 main, 登场NPC为 npc, 仅被提及为 mentioned
 - importance: 日常琐事0.2-0.4, 重要互动0.5-0.7, 剧情转折0.8-1.0
-- 同一事件的多个人物都要登记 participants, 并标注角色`;
+- 同一事件的多个人物都要登记 participants, 并标注角色
+
+事件文本的信息正交性 (重要):
+- title / process / cause_text / result_text 只写"发生了什么"(行为、抉择、转折),
+  禁止写入时间、人物名、地点 —— 它们分别由 time_point / participants / location 字段表达,
+  在正文里再写一遍等于同一信息出现两次 (注入时会占用双倍篇幅)。
+- 正例: title "酒馆初遇", process "为躲雨推门而入, 与独坐角落的陌生人搭话"
+- 反例: title "暴雨第三夜主角与艾拉在酒馆初遇" (时间、人物、地点全揉进标题)
+
+不是事件的行为不要建事件:
+- 日常重复的琐事 (买东西、吃饭、睡觉、寒暄、赶路) 不建事件 —— 它们属于属性观察,
+  由另一套流程归纳为习惯 (aspect=habit), 反复出现只会被折叠成一条"稳定行为"。
+- 只有推进剧情的叙事事件才建: 会面、冲突、抉择、转折、发现、承诺。
+- 判断标准: 去掉这条事件, 剧情会不会少一个因果环节。会 -> 建; 不会 -> 不建。
+- 反例: "艾拉去小卖部"、"两人吃晚饭"、"主角睡下" —— 这些不是叙事事件。`;
 
 // 容错解析: 剥代码围栏, 截取首个 { 到末个 } 之间内容
 export function parseJsonLoose(raw) {

@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import express from 'express';
 import Database from 'better-sqlite3';
 import { migrate, getSchemaVersion } from '../src/db/migrate.js';
-import { createRouter } from '../src/api/routes.js';
+import { createRouter, jsonErrorHandler } from '../src/api/routes.js';
 import { createMemory } from '../src/services/memoryService.js';
 import { addChunk } from '../src/services/chunkService.js';
 import { createLlmClient } from '../src/services/llmClient.js';
@@ -62,6 +62,8 @@ app.use('/unconf', createRouter(db, { llm: unconfLlm, embed: okEmbed }));
 app.use('/noembed', createRouter(db, { llm: okLlm, embed: null }));
 // embedding 客户端存在但未配置 (报错)
 app.use('/unconfembed', createRouter(db, { llm: okLlm, embed: unconfEmbed }));
+// 统一 JSON 错误响应 (body 解析失败 / 超限), 与 index.js 同口径
+app.use(jsonErrorHandler);
 
 const server = app.listen(0);
 await new Promise((r) => server.once('listening', r));
@@ -102,6 +104,29 @@ check('请求体 tokenBudget 覆盖 config (999)',
   ctxOverride.body.tokenBudget === 999, `实际 ${ctxOverride.body.tokenBudget}`);
 check('请求体 topK 覆盖 config (5)',
   ctxOverride.body.hitCount === 5, `实际 ${ctxOverride.body.hitCount}`);
+
+// ---------- 2b) 注入形态开关经 HTTP 生效 (前端只下发偏好, 渲染与回退都在服务端) ----------
+console.log('\n--- 注入形态开关 ---');
+check('默认走表格形态', ['tables', 'mixed'].includes(ctxDefault.body.injectionMode),
+  String(ctxDefault.body.injectionMode));
+check('默认表格化与立场段都开',
+  ctxDefault.body.tablesEnabled === true && ctxDefault.body.stancesEnabled === true,
+  JSON.stringify({ t: ctxDefault.body.tablesEnabled, s: ctxDefault.body.stancesEnabled }));
+
+const ctxBullets = await req('POST', '/api/context', {
+  query: 'ELARA', chatId: 'chat001', injectTables: false,
+});
+check('injectTables=false -> injectionMode=bullets (无损回退)',
+  ctxBullets.body.injectionMode === 'bullets', String(ctxBullets.body.injectionMode));
+check('回退后不再出现对齐表的分隔行',
+  !/^-{3,}/m.test(String(ctxBullets.body.text ?? '')), String(ctxBullets.body.text ?? '').slice(0, 100));
+
+const ctxNoStance = await req('POST', '/api/context', {
+  query: 'ELARA', chatId: 'chat001', injectStances: false,
+});
+check('injectStances=false -> 只关立场段, 表格化仍开',
+  ctxNoStance.body.stancesEnabled === false && ctxNoStance.body.tablesEnabled === true,
+  JSON.stringify({ t: ctxNoStance.body.tablesEnabled, s: ctxNoStance.body.stancesEnabled }));
 
 const retrDefault = await req('POST', '/api/retrieve', { query: 'ELARA', chatId: 'chat001' });
 check('POST /api/retrieve hits 受 config.topK 约束 (=2)',
@@ -178,6 +203,36 @@ check('GET /api/chunks 缺 entityType/entityId -> 400',
 const badType = await req('POST', '/api/memories', { type: 'nope', content: 'x' });
 check('POST /api/memories 非法 type -> 400',
   badType.status === 400 && badType.body.ok === false, JSON.stringify(badType.body));
+
+// ---------- 6) 统一 JSON 错误响应 + limit 钳制 ----------
+console.log('\n--- 统一 JSON 错误响应 / limit 钳制 ---');
+// 裸请求: 发非法 JSON (req 助手会 stringify, 这里绕开它)
+async function rawReq(method, p, rawBody) {
+  const res = await fetch(base + p, {
+    method, headers: { 'Content-Type': 'application/json' }, body: rawBody,
+  });
+  return { status: res.status, body: await res.json() };
+}
+const malformed = await rawReq('POST', '/api/memories', '{not json');
+check('非法 JSON body -> 400 {ok:false} 而非 HTML 错误页 (统一错误中间件)',
+  malformed.status === 400 && malformed.body.ok === false
+  && String(malformed.body.error).startsWith('请求体解析失败'),
+  JSON.stringify(malformed.body));
+
+const listAll = await req('GET', '/api/memories?limit=99999&chatId=chat001');
+check('GET /api/memories limit 超界被钳制到上限 200',
+  listAll.status === 200, JSON.stringify(listAll.status));
+
+// 造 >200 行才能真正触发钳制 (直接 SQL 批量插, 不走 createMemory)
+const bulk = db.prepare(`
+  INSERT INTO memories (type, content, keywords, importance, scope, chat_id, created_at, updated_at)
+  VALUES ('fact', 'bulk', '', 0.5, 'chat', 'chat-bulk', 0, 0)
+`);
+db.transaction(() => { for (let i = 0; i < 210; i++) bulk.run(); })();
+const listClamped = await req('GET', '/api/memories?limit=99999&chatId=chat-bulk');
+check('limit=99999 实际只返回 200 行 (MAX_LIST_LIMIT 生效)',
+  listClamped.status === 200 && listClamped.body.memories.length === 200,
+  `实际 ${listClamped.body.memories?.length}`);
 
 // ---------- 收尾 ----------
 server.close();

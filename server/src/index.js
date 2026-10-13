@@ -5,7 +5,7 @@ import express from 'express';
 import { loadConfig } from './config.js';
 import { openDatabase } from './db/connection.js';
 import { migrate } from './db/migrate.js';
-import { createRouter } from './api/routes.js';
+import { createRouter, jsonErrorHandler } from './api/routes.js';
 import { createCorsMiddleware, describeCors } from './api/cors.js';
 import { createLlmClient } from './services/llmClient.js';
 import { createEmbeddingClient } from './services/embeddingClient.js';
@@ -22,6 +22,26 @@ if (config.llm.provider !== 'mock' && !config.llm.apiKey) {
 }
 if (config.embedding.provider !== 'mock' && !config.embedding.apiKey) {
   console.warn('[config] embedding.apiKey 未配置, 向量检索不可用 (编辑 server/config.json 填入)');
+}
+
+// 绑定地址检查: 本服务无鉴权, 绑定非回环地址等于把整个记忆库暴露给局域网/公网
+if (!/^(127\.|localhost$|\[?::1\]?$)/.test(config.server.host)) {
+  console.warn(`[server] 警告: 当前绑定 ${config.server.host}, 本服务无鉴权, 请勿绑定非回环地址`);
+}
+
+// embedding 模型漂移检测: 换模型/换维度后, 库内旧向量会静默失效
+// (维度不符的块不参与向量召回, 也不再建立 supersedes 防吃书链) —— 启动时如实提示
+if (config.embedding.provider !== 'mock' && config.embedding.model) {
+  try {
+    const models = db.prepare(
+      'SELECT DISTINCT embedding_model FROM attribute_chunks WHERE embedding IS NOT NULL'
+    ).all().map((r) => r.embedding_model).filter(Boolean);
+    if (models.length > 0 && !models.includes(config.embedding.model)) {
+      console.warn(`[config] 库内观察块向量由 [${models.join(', ')}] 生成, 与当前 embedding.model=${config.embedding.model} 不一致; 旧向量不参与召回与防吃书判定, 建议重建或改回原模型`);
+    } else if (models.length > 1) {
+      console.warn(`[config] 库内存在多套 embedding 模型 [${models.join(', ')}], 仅与当前模型同维度的块参与召回`);
+    }
+  } catch { /* 检测失败不影响启动 */ }
 }
 
 const app = express();
@@ -42,6 +62,8 @@ app.use(createRouter(db, {
     cors: describeCors(corsOptions),
   },
 }));
+// 统一 JSON 错误响应 (body 解析失败/超限), 必须在 router 之后挂载
+app.use(jsonErrorHandler);
 
 const server = app.listen(config.server.port, config.server.host, () => {
   console.log(`[server] 记忆服务已启动: http://${config.server.host}:${config.server.port}`);

@@ -23,7 +23,7 @@ import {
   MEMORY_TYPES, MEMORY_SCOPES, CHUNKABLE_ENTITY_TYPES, THRESHOLDS,
   RETRIEVAL_SCORING, FORGET_SCORING, FORGET_TABLES,
   RETRIEVAL_FALLBACK_DEFAULTS, ENDPOINTS,
-  SUMMARY_POLICY, TOKEN_ESTIMATION,
+  SUMMARY_POLICY, TOKEN_ESTIMATION, INJECTION_TABLES,
 } from '../src/domain/constants.js';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -182,10 +182,39 @@ check('公式以文本形式下发 (前端原样展示, 不自己拼)',
   && typeof meta.scoring.forget.formula === 'string');
 check('生效规则文案齐备', ['visibility', 'softDelete', 'supersede', 'stanceEvolution', 'entityIdDuality']
   .every((k) => typeof meta.rules[k] === 'string' && meta.rules[k].length > 0));
-check('注入段落顺序下发 (画像 → 前情提要 → 相关记忆 → 相关细节)',
-  meta.contextSections.length === 4
-  && meta.contextSections.map((s) => s.key).join(',') === 'profile,digest,memories,chunks',
+check('注入段落顺序下发 (画像 → 立场 → 关键实体 → 前情提要 → 时间线 → 相关记忆 → 相关细节)',
+  meta.contextSections.length === 7
+  && meta.contextSections.map((s) => s.key).join(',') === 'profile,stances,entities,digest,timeline,memories,chunks',
   JSON.stringify(meta.contextSections.map((s) => s.key)));
+check('段落 order 与数组顺序一致 (前端按 order 展示不会错位)',
+  meta.contextSections.every((s, i) => s.order === i + 1));
+check('injectionTables 与常量同源 (标题/上限/预算/立场显示规则)',
+  eqArr(meta.injectionTables, INJECTION_TABLES),
+  JSON.stringify(Object.keys(meta.injectionTables ?? {})));
+check('每个表格段都有标题, 且都能在 contextSections 里找到对应 key',
+  ['profile', 'stances', 'entities', 'timeline', 'memories', 'chunks'].every((k) => {
+    const header = meta.injectionTables.headers[k];
+    const section = meta.contextSections.find((s) => s.key === k);
+    return typeof header === 'string' && header.startsWith('【') && !!section;
+  }),
+  JSON.stringify(meta.injectionTables.headers));
+check('立场显示规则齐备 (表露列拼装不缺项)',
+  ['hiddenPrefix', 'disguisedPrefix', 'plainLabel', 'unawareSuffix', 'emptyBasis']
+    .every((k) => typeof meta.injectionTables.stanceDisplay[k] === 'string'));
+check('常驻段预算与段落一一对应 (不留给前端猜)',
+  ['profile', 'stances', 'entities', 'timeline'].every((k) => typeof meta.injectionTables.budgets[k] === 'number')
+  && meta.injectionTables.budgets.profile > 0);
+check('时间线格式常量齐备 (因果标注三型 + 锚点/注记规则, 前端不另存一份)',
+  ['caused', 'led_to', 'preceded', 'contradicts'].every((k) => typeof meta.injectionTables.linkLabels[k] === 'string')
+  && typeof meta.injectionTables.timeline.seqMark === 'string'
+  && typeof meta.injectionTables.timeline.untimedLabel === 'string'
+  && Array.isArray(meta.injectionTables.timeline.noteSources)
+  && meta.injectionTables.timeline.noteSources.length > 0);
+check('实体表常量齐备 (收录类型的标签与只读来源一一对应)',
+  meta.injectionTables.entities.types.every((t) => typeof meta.injectionTables.entities.kindLabels[t] === 'string'
+    && !!meta.injectionTables.entities.sources[t]?.table)
+  && meta.injectionTables.entities.windowWeight >= 1,
+  JSON.stringify(meta.injectionTables.entities.types));
 
 // ============================================================
 // 4b) 总结策略: 触发楼层数与 token 系数必须与常量同源

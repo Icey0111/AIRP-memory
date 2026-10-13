@@ -34,6 +34,10 @@ const FIELDS = [
   { sel: '#tm_query_messages', key: 'queryMessages', type: 'int' },
   { sel: '#tm_query_max_chars', key: 'queryMaxChars', type: 'int' },
 
+  // 注入形态: 纯前端偏好, 语义 (列名/上限/预算) 一律由 meta.injectionTables 下发
+  { sel: '#tm_inject_tables', key: 'injectTables', type: 'bool' },
+  { sel: '#tm_inject_stances', key: 'injectStancesSection', type: 'bool' },
+
   { sel: '#tm_auto_write', key: 'autoWriteEnabled', type: 'bool' },
   { sel: '#tm_auto_every', key: 'autoWriteEveryNMessages', type: 'int' },
   { sel: '#tm_write_count', key: 'writeMessageCount', type: 'int' },
@@ -262,6 +266,12 @@ export function mountPanel({ metaStore, injector, extractor, summarizer, log, bu
       ['注入顺序', (m.contextSections ?? []).length
         ? m.contextSections.map((x) => `${esc(x.order)}. ${esc(x.label)}（${esc(x.description)}）`).join(' → ')
         : '未声明'],
+      ['注入表格', m.injectionTables
+        ? `${m.injectionTables.enabled ? '开' : '关'} · 常驻 ${esc(m.injectionTables.format?.resident ?? '?')}`
+          + ` / 检索 ${esc(m.injectionTables.format?.retrieved ?? '?')}`
+          + ` · 行数上限 ${esc(Object.entries(m.injectionTables.limits ?? {}).map(([k, v]) => `${k} ${v}`).join(' / ') || '未声明')}`
+          + ` · 常驻预算 ${esc(Object.entries(m.injectionTables.budgets ?? {}).map(([k, v]) => `${k} ${v}`).join(' / ') || '未声明')}`
+        : '未声明'],
       ['前情提要', `${esc(m.digestFormat?.header ?? '未声明')}`
         + `${m.digestFormat?.line ? ` <span class="tm-mono">${esc(m.digestFormat.line)}</span>` : ''}`
         + ` —— ${esc(rules.summaryDigest ?? '未声明')}`],
@@ -298,8 +308,18 @@ export function mountPanel({ metaStore, injector, extractor, summarizer, log, bu
       const time = new Date(o.at ?? Date.now()).toLocaleTimeString();
       if (o.data) {
         const d = o.data;
-        parts.push(`<div><b>注入</b> ${esc(time)} · 检索段 ${esc(d.usedTokens)}/${esc(d.tokenBudget)} token · `
-          + `画像 ${esc(d.profileCount)} 条 · 记忆命中 ${esc(d.hitCount)} 条 · 细节命中 ${esc(d.chunkHitCount)} 条</div>`);
+        // 各段条数: 缺字段就不显示 (旧服务端 / 未走的段), 不硬编码 "0"
+        const counts = [
+          `画像 ${esc(d.profileCount)}`,
+          d.stanceCount !== undefined ? `立场 ${esc(d.stanceCount)}` : null,
+          d.entityCount !== undefined ? `实体 ${esc(d.entityCount)}` : null,
+          d.timelineCount !== undefined ? `时间线 ${esc(d.timelineCount)}` : null,
+          `记忆 ${esc(d.hitCount)}`,
+          `细节 ${esc(d.chunkHitCount)}`,
+        ].filter(Boolean).join(' · ');
+        parts.push(`<div><b>注入</b> ${esc(time)} · 检索段 ${esc(d.usedTokens)}/${esc(d.tokenBudget)} token`
+          + `${d.injectionMode ? ` · 形态 ${esc(d.injectionMode)}` : ''}</div>`);
+        parts.push(`<div class="tm-muted">${counts}</div>`);
         parts.push(`<div class="tm-muted">前情提要 ${esc(d.digestCount ?? 0)}/${esc(d.digestTotal ?? 0)} 条`
           + `（约 ${esc(d.digestTokens ?? 0)} token，独立预算 ${esc(d.digestMaxTokens ?? '?')}）`
           + `${d.digestTruncated ? ` · 已丢掉最早 ${esc(d.digestDropped ?? 0)} 条` : ''}</div>`);
@@ -370,11 +390,27 @@ export function mountPanel({ metaStore, injector, extractor, summarizer, log, bu
       : `<div class="tm-subsection-title">前情提要（常驻）</div>
         <div class="tm-muted">本聊天暂无摘要 —— 总结一次后，这里就会出现按楼层顺序的前情提要链</div>`;
 
+    const segCounts = [
+      `画像 ${esc(context?.profileCount)}`,
+      context?.stanceCount !== undefined ? `立场 ${esc(context.stanceCount)}` : null,
+      context?.entityCount !== undefined ? `实体 ${esc(context.entityCount)}` : null,
+      context?.timelineCount !== undefined ? `时间线 ${esc(context.timelineCount)}` : null,
+      `记忆 ${esc(context?.hitCount)}`,
+      `细节 ${esc(context?.chunkHitCount)}`,
+    ].filter(Boolean).join(' · ');
+
+    // 实际注入原文: 与酒馆 prompt 里拿到的同一份字节 (服务端渲染, 前端不重排)
+    const injected = String(context?.text ?? '').trim();
+
     el.innerHTML = `
       <div class="tm-muted">query: ${esc(query)}</div>
-      <div>检索段 ${esc(context?.usedTokens)}/${esc(context?.tokenBudget)} token ·
-        画像 ${esc(context?.profileCount)} · 记忆 ${esc(context?.hitCount)} · 细节 ${esc(context?.chunkHitCount)}
-        · 前情提要 ${esc(context?.digestCount ?? 0)} 条</div>
+      <div>检索段 ${esc(context?.usedTokens)}/${esc(context?.tokenBudget)} token
+        ${context?.injectionMode ? `· 形态 ${esc(context.injectionMode)}` : ''}</div>
+      <div class="tm-muted">${segCounts}</div>
+      <div class="tm-subsection-title">注入文本（实际拼进 prompt 的原文）</div>
+      ${injected
+    ? `<pre class="tm-digest">${esc(injected)}</pre>`
+    : '<div class="tm-muted">本轮无任何段落被注入（无画像、无命中、无摘要）</div>'}
       ${digestBlock}
       ${hitRows ? `<div class="tm-subsection-title">记忆命中（FTS）</div>
         <table class="tm-table"><thead><tr><th>类型</th><th>score</th><th>内容</th></tr></thead><tbody>${hitRows}</tbody></table>` : ''}

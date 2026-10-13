@@ -3,6 +3,7 @@
 //           不同 stance_type 并存 (信任能力与戒备动机可以同时成立)
 import { findOrCreatePerson, findOrCreateOrg } from './entityService.js';
 import { addStance, findCurrentStance } from './stanceService.js';
+import { parseJsonLoose } from './extractionService.js';
 
 const EXTRACT_SYSTEM = `你是角色扮演对话的立场抽取器。从对话中抽取人物/组织之间的相对立场。
 立场是有向的: A对B 与 B对A 是两条独立记录, 不对称。只抽取对话中有依据的立场, 不要臆测。
@@ -26,10 +27,9 @@ const EXTRACT_SYSTEM = `你是角色扮演对话的立场抽取器。从对话�
 }
 没有可抽取内容时输出 {"stances": []}`;
 
-function parseJson(text) {
-  const cleaned = String(text).replace(/^```(?:json)?\s*|\s*```$/g, '').trim();
-  return JSON.parse(cleaned);
-}
+// JSON 解析统一用 parseJsonLoose (extractionService): 剥围栏 + 截取首尾大括号,
+// LLM 在 JSON 前后加散文也能容错 —— 三个抽取器口径一致, 不再各写一份。
+const parseJson = parseJsonLoose;
 
 function resolveEntity(db, type, name) {
   if (type === 'person') return findOrCreatePerson(db, { name });

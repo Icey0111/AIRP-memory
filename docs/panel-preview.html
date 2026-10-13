@@ -432,7 +432,7 @@ input[type=checkbox] { accent-color: #79b8ff; }
               <input id="tm_token_budget" class="text_pole tm-num" type="number" min="0" max="20000" step="100">
               <span class="tm-muted tm-placeholder-default" data-tm-default="retrieval.tokenBudget"></span>
             </label>
-            <label class="tm-row" title="【前情提要】摘要链的独立预算，不与上面的 token 预算互相挤占">
+            <label class="tm-row" title="「前情提要」摘要链的独立预算，不与上面的 token 预算互相挤占">
               <span class="tm-label">前情提要预算</span>
               <input id="tm_digest_tokens" class="text_pole tm-num" type="number" min="0" max="8000" step="50">
               <span class="tm-muted tm-placeholder-default" data-tm-default="summary.digestMaxTokens"></span>
@@ -445,6 +445,20 @@ input[type=checkbox] { accent-color: #79b8ff; }
               <input id="tm_query_max_chars" class="text_pole tm-num" type="number" min="50" max="4000" step="50">
               <span class="tm-muted">字上限</span>
             </label>
+
+            <div class="tm-subsection">
+              <div class="tm-subsection-title">注入形态</div>
+              <div class="tm-hint">表格由服务端渲染（对齐、截断、分组、首现展开都在那边），这里只决定用不用。列名与行数上限见「诊断与契约」下发的 <code>injectionTables</code>。</div>
+              <label class="checkbox_label" for="tm_inject_tables">
+                <input id="tm_inject_tables" type="checkbox">
+                <span>表格化注入（画像 / 立场 / 关键实体 / 时间线 / 检索行）</span>
+              </label>
+              <label class="checkbox_label" for="tm_inject_stances">
+                <input id="tm_inject_stances" type="checkbox">
+                <span>注入「关系立场」段（角色之间的关系与态度）</span>
+              </label>
+              <div class="tm-hint">关闭表格化即退回逐条 bullet —— 信息不丢（原文一字未删），只是不再对齐成表；抽取与库中数据完全不受影响。</div>
+            </div>
           </div>
         </section>
 
