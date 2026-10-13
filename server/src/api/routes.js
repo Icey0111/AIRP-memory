@@ -136,6 +136,14 @@ export function createRouter(db, { clients = null, llm = null, embed = null, ret
     res.json(configResponse());
   }));
 
+  // 模型列表: 服务端持钥代理供应商的 GET /models, 前端据此做下拉联想 (密钥不出服务端)
+  router.get('/api/config/models', handleAsync(async (req, res) => {
+    if (!configApi) throw new Error('配置读写未启用');
+    const kind = req.query.kind === 'embedding' ? 'embedding' : 'llm';
+    const models = await configApi.listModels(kind);
+    res.json({ ok: true, kind, models });
+  }));
+
   // ---------- 一阶记忆 ----------
   router.post('/api/memories', handle((req, res) => {
     res.json({ ok: true, memory: createMemory(db, req.body ?? {}) });

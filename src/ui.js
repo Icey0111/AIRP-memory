@@ -728,8 +728,9 @@ export function mountPanel({ api, metaStore, injector, extractor, summarizer, lo
       document.getElementById('tm_cfg_embed_key').placeholder = emb.apiKeySet
         ? `已配置 (${emb.apiKey}) · 留空保持不变` : '未配置';
     } else {
-      document.getElementById('tm_cfg_llm_key').placeholder = '未配置';
-      document.getElementById('tm_cfg_embed_key').placeholder = '未配置';
+      const pending = Boolean(getSettings().pendingModelConfig);
+      document.getElementById('tm_cfg_llm_key').placeholder = pending ? '已暂存 · 服务上线后自动应用' : '未配置';
+      document.getElementById('tm_cfg_embed_key').placeholder = pending ? '已暂存 · 服务上线后自动应用' : '未配置';
     }
   }
 
@@ -756,6 +757,23 @@ export function mountPanel({ api, metaStore, injector, extractor, summarizer, lo
       : `现在就可以填写并点「保存」—— 会先暂存在本机，记忆服务上线后自动应用生效 (${lastConfigError || '当前未连接'}）`);
   }
 
+  // 模型列表联想: 服务端持钥代理供应商 /models, 前端只拿 id 列表。
+  // 静默失败 (中转不支持 /models、网络抖动都不打扰用户), 输入框始终可手填。
+  async function refreshModelSuggestions(kind, dl) {
+    if (!dl) return;
+    try {
+      const r = await api.listModels(kind, { timeoutMs: 12000 });
+      dl.innerHTML = (r.models ?? []).slice(0, 200)
+        .map((id) => `<option value="${String(id).replace(/"/g, '&quot;')}"></option>`).join('');
+    } catch { dl.innerHTML = ''; }
+  }
+
+  function refreshModelSuggestionsIfReady(view) {
+    const cfg = view?.config;
+    if (cfg?.llm?.baseUrl && cfg?.llm?.apiKeySet) void refreshModelSuggestions('llm', document.getElementById('tm_dl_llm_models'));
+    if (cfg?.embedding?.baseUrl && cfg?.embedding?.apiKeySet) void refreshModelSuggestions('embedding', document.getElementById('tm_dl_embed_models'));
+  }
+
   async function loadConfigView() {
     try {
       lastConfigView = await api.getConfig();
@@ -768,7 +786,9 @@ export function mountPanel({ api, metaStore, injector, extractor, summarizer, lo
           lastConfigView = r;
           getSettings().pendingModelConfig = null;
           saveSettings();
-          setCfgStatus(`已自动应用此前暂存的模型配置: LLM ${r.llm?.model || '未配置'} · Embedding ${r.embedding?.model || '未配置'}`);
+          const capName = (d) => (d?.model ? `${d.provider}/${d.model}` : '未填模型名');
+          setCfgStatus(`已自动应用此前暂存的模型配置: LLM ${capName(r.llm)} · Embedding ${capName(r.embedding)}`);
+          refreshModelSuggestionsIfReady(r);
           toast('success', '暂存的模型配置已应用到服务端');
         } catch (err) {
           setCfgStatus(`暂存的模型配置应用失败：${err.message} (暂存保留, 服务可用后重试)`);
@@ -779,6 +799,7 @@ export function mountPanel({ api, metaStore, injector, extractor, summarizer, lo
       lastConfigError = err.message ?? String(err);
     }
     renderConfigForm();
+    refreshModelSuggestionsIfReady(lastConfigView);
   }
 
   function readFormPayload() {
@@ -817,8 +838,9 @@ export function mountPanel({ api, metaStore, injector, extractor, summarizer, lo
       const r = await api.saveConfig(payload);
       lastConfigView = r;
       renderConfigForm();
-      const cap = (d) => (d?.configured ? `${d.provider}/${d.model}` : '未配置');
+      const cap = (d) => (d?.configured ? `${d.provider}/${d.model}` : (d?.apiKeySet ?? d?.configured === false ? '密钥已存, 还差 baseUrl/模型名' : '未配置'));
       setCfgStatus(`已保存并生效 (无需重启): LLM ${cap(r.llm)} · Embedding ${cap(r.embedding)}`);
+      refreshModelSuggestionsIfReady(r);
       toast('success', '模型配置已保存, 正在刷新契约…');
       await reloadMeta();              // 热重建后能力标记会变, 重新拉契约
     } catch (err) {

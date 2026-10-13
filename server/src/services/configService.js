@@ -89,8 +89,7 @@ export function createConfigApi({ filePath, defaults, rebuild }) {
   }
 
   /** 深合并写入 + 持久化 + 热重建。返回打码视图与重建后的客户端自描述 */
-  function update(patch) {
-    if (!isPlainObject(patch)) throw new Error('请求体必须是对象');
+  function update(patch) {    if (!isPlainObject(patch)) throw new Error('请求体必须是对象');
     const unknown = Object.keys(patch).filter((k) => !['llm', 'embedding'].includes(k));
     if (unknown.length) throw new Error(`不允许修改的配置节: ${unknown.join(', ')} (只接受 llm / embedding)`);
     for (const k of ['llm', 'embedding']) {
@@ -125,5 +124,35 @@ export function createConfigApi({ filePath, defaults, rebuild }) {
     return { config: view() };
   }
 
-  return { view, update, describe };
+  /**
+   * 拉取供应商的模型列表 (OpenAI 兼容 GET /models)。
+   * 必须由服务端代理: apiKey 只在服务端, 前端永远不碰明文密钥。
+   * kind ∈ llm | embedding; 返回模型 id 字符串数组。
+   */
+  async function listModels(kind) {
+    if (kind !== 'llm' && kind !== 'embedding') throw new Error('kind 必须是 llm 或 embedding');
+    const sec = merged()[kind] ?? {};
+    if (!sec.baseUrl) throw new Error(`${kind}.baseUrl 未配置 —— 先保存接口地址`);
+    if (!sec.apiKey) throw new Error(`${kind}.apiKey 未配置 —— 先保存密钥`);
+    const url = `${String(sec.baseUrl).replace(/\/+$/, '')}/models`;
+    let res;
+    try {
+      res = await fetch(url, {
+        headers: { Authorization: `Bearer ${sec.apiKey}` },
+        signal: AbortSignal.timeout(10000),
+      });
+    } catch (err) {
+      throw new Error(`拉取模型列表失败: 无法访问 ${url} (${err.message})`);
+    }
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`拉取模型列表失败: HTTP ${res.status}${body ? ` - ${body.slice(0, 200)}` : ''}`);
+    }
+    const data = await res.json().catch(() => null);
+    const list = Array.isArray(data?.data) ? data.data : Array.isArray(data?.models) ? data.models : [];
+    const ids = list.map((m) => (typeof m === 'string' ? m : (m?.id ?? m?.name))).filter(Boolean);
+    return [...new Set(ids)].sort();
+  }
+
+  return { view, update, describe, listModels };
 }

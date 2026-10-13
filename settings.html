@@ -65,7 +65,8 @@
             </label>
             <label class="tm-row">
               <span class="tm-label">LLM 模型</span>
-              <input id="tm_cfg_llm_model" class="text_pole" type="text" placeholder="模型名">
+              <input id="tm_cfg_llm_model" class="text_pole" type="text" placeholder="模型名" list="tm_dl_llm_models">
+              <datalist id="tm_dl_llm_models"></datalist>
             </label>
             <label class="tm-row">
               <span class="tm-label">LLM 密钥</span>
@@ -77,13 +78,14 @@
             </label>
             <label class="tm-row">
               <span class="tm-label">Embedding 模型</span>
-              <input id="tm_cfg_embed_model" class="text_pole" type="text" placeholder="模型名">
+              <input id="tm_cfg_embed_model" class="text_pole" type="text" placeholder="模型名" list="tm_dl_embed_models">
+              <datalist id="tm_dl_embed_models"></datalist>
             </label>
             <label class="tm-row">
               <span class="tm-label">Embedding 密钥</span>
               <input id="tm_cfg_embed_key" class="text_pole" type="password" autocomplete="off" placeholder="">
             </label>
-            <div id="tm_cfg_status" class="tm-detail tm-muted">密钥留空 = 保持已存值不变；保存后立即生效，无需重启服务</div>
+            <div id="tm_cfg_status" class="tm-detail tm-muted">密钥留空 = 保持已存值不变；保存后立即生效，无需重启服务；接口地址+密钥齐备后模型名自动联想</div>
           </div>
         </section>
 
