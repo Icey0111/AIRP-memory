@@ -30,6 +30,13 @@ export const DEFAULT_SETTINGS = {
   // 手机/局域网访问场景必填, 本机回环访问留空即可。
   accessToken: '',
 
+  // 模型配置的**离线暂存** (V8.2): 服务没启动时也允许填写, 存在这里;
+  // 服务上线后面板自动 POST /api/config 应用并清空。
+  // 注意: 暂存的是 baseUrl/model 等结构, 上游密钥仍应只在服务在线时提交;
+  // 暂存若含密钥则随酒馆 settings 落盘 —— 与"密钥不进前端"的折中, 仅在
+  // 用户于离线状态填了密钥时发生, 应用成功即清空。
+  pendingModelConfig: null,
+
   // ---- 注入 (每轮生成前) ----
   injectEnabled: true,
   // 下面两组取值是 SillyTavern 自身 API 的取值, 属宿主语义, 非后端语义
@@ -78,7 +85,7 @@ export const DEFAULT_SETTINGS = {
 };
 
 /** 由 UI 自身维护、没有面板控件的持久化键。静态检查据此豁免"每个键都必须有控件"。 */
-export const NO_UI_KEYS = ['uiCollapsed'];
+export const NO_UI_KEYS = ['uiCollapsed', 'pendingModelConfig'];
 
 /**
  * 已废弃的键: 语义已变或改名 (如触发口径从估算 token 改成楼层数)。

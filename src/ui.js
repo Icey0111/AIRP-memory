@@ -697,91 +697,135 @@ export function mountPanel({ api, metaStore, injector, extractor, summarizer, lo
   // ---------- 模型配置 (表单在前端, 密钥只发往服务端落盘, 不进酒馆 settings) ----------
   // 读取一律打码 (••••+末4位, 只供辨认); 密钥输入框从不回填任何值,
   // 留空提交 = "保持不变"。字段语义见 GET/POST /api/config (docs/api.md)。
-  // 表单依赖服务在线 (配置要发给服务端保存), 不可达时禁用并**说明原因与下一步** ——
-  // 只显示禁止光标不解释, 用户会以为面板坏了 (实测反馈)。
+  //
+  // V8.2 关键改动: **表单永远可编辑**。服务在线 => 保存即生效;
+  // 服务离线 => 保存进暂存槽 (settings.pendingModelConfig), 面板的离线自动探测
+  // 连上后**自动应用并清空**。此前"离线即禁用"把用户锁死在"先起服务才能填"的
+  // 死循环里 (实测反馈: 想填配置恰恰是还没跑起来的第一步)。
+  // 暂存槽在酒馆 settings 里落盘, 若其中含密钥仅在用户离线时填了密钥才发生,
+  // 应用成功即清空 —— 与"密钥不进前端"的折中已在注释里如实标注。
   let lastConfigView = null;
   let lastConfigError = '';
 
+  function setCfgStatus(text) {
+    const el = document.getElementById('tm_cfg_status');
+    if (el) el.textContent = text;
+  }
+
+  function fillFormFrom(source, isServerView) {
+    const llm = isServerView ? (source?.config?.llm ?? {}) : (source?.llm ?? {});
+    const emb = isServerView ? (source?.config?.embedding ?? {}) : (source?.embedding ?? {});
+    document.getElementById('tm_cfg_llm_baseurl').value = llm.baseUrl ?? '';
+    document.getElementById('tm_cfg_llm_model').value = llm.model ?? '';
+    document.getElementById('tm_cfg_embed_baseurl').value = emb.baseUrl ?? '';
+    document.getElementById('tm_cfg_embed_model').value = emb.model ?? '';
+    // 密钥框永远清空: 已配置时只显示打码占位, 明文从不回显
+    document.getElementById('tm_cfg_llm_key').value = '';
+    document.getElementById('tm_cfg_embed_key').value = '';
+    if (isServerView) {
+      document.getElementById('tm_cfg_llm_key').placeholder = llm.apiKeySet
+        ? `已配置 (${llm.apiKey}) · 留空保持不变` : '未配置';
+      document.getElementById('tm_cfg_embed_key').placeholder = emb.apiKeySet
+        ? `已配置 (${emb.apiKey}) · 留空保持不变` : '未配置';
+    } else {
+      document.getElementById('tm_cfg_llm_key').placeholder = '未配置';
+      document.getElementById('tm_cfg_embed_key').placeholder = '未配置';
+    }
+  }
+
   function renderConfigForm() {
-    const status = document.getElementById('tm_cfg_status');
     const ids = ['tm_cfg_llm_baseurl', 'tm_cfg_llm_model', 'tm_cfg_llm_key',
       'tm_cfg_embed_baseurl', 'tm_cfg_embed_model', 'tm_cfg_embed_key'];
     const save = document.getElementById('tm_cfg_save');
-    const anyMissing = ids.some((id) => !document.getElementById(id));
-    if (anyMissing || !status || !save) return;
-
-    if (!lastConfigView) {
-      for (const id of ids) document.getElementById(id).disabled = true;
-      save.disabled = true;
-      // 两种"读不到"要分开说: 服务没起 vs 服务在跑但版本旧 (无 /api/config 端点)
-      status.textContent = /404|Not Found/i.test(lastConfigError)
-        ? '服务在线但版本较旧 (无模型配置接口) —— 重启记忆服务 (cd server && npm start) 后点「自检并载入契约」'
-        : `服务未连接 (${lastConfigError || '无响应'}) —— 在终端启动记忆服务 (cd server && npm start)，启动后本面板每 10 秒自动探测、连上即解锁，无需手动刷新`;
-      return;
-    }
-    const { config } = lastConfigView;
-    document.getElementById('tm_cfg_llm_baseurl').value = config.llm?.baseUrl ?? '';
-    document.getElementById('tm_cfg_llm_model').value = config.llm?.model ?? '';
-    document.getElementById('tm_cfg_embed_baseurl').value = config.embedding?.baseUrl ?? '';
-    document.getElementById('tm_cfg_embed_model').value = config.embedding?.model ?? '';
-    // 密钥框永远清空: 已配置时只显示打码占位, 明文从不回显
-    const llmKey = document.getElementById('tm_cfg_llm_key');
-    const embedKey = document.getElementById('tm_cfg_embed_key');
-    llmKey.value = '';
-    embedKey.value = '';
-    llmKey.placeholder = config.llm?.apiKeySet ? `已配置 (${config.llm.apiKey}) · 留空保持不变` : '未配置';
-    embedKey.placeholder = config.embedding?.apiKeySet ? `已配置 (${config.embedding.apiKey}) · 留空保持不变` : '未配置';
+    if (ids.some((id) => !document.getElementById(id)) || !save) return;
     for (const id of ids) document.getElementById(id).disabled = false;
     save.disabled = false;
-    if (!/已保存并生效/.test(status.textContent)) {
-      status.textContent = '密钥留空 = 保持已存值不变；保存后立即生效，无需重启服务';
+
+    if (lastConfigView) {
+      fillFormFrom(lastConfigView, true);
+      if (!/已保存并生效|已暂存|已自动应用/.test(document.getElementById('tm_cfg_status')?.textContent ?? '')) {
+        setCfgStatus('密钥留空 = 保持已存值不变；保存后立即生效，无需重启服务');
+      }
+      return;
     }
+    // 离线: 回填暂存 (若有), 状态行说清"现在填会发生什么"
+    fillFormFrom(getSettings().pendingModelConfig ?? {}, false);
+    const oldVersion = /404|Not Found/i.test(lastConfigError);
+    setCfgStatus(oldVersion
+      ? '服务在线但版本较旧 (无模型配置接口) —— 重启记忆服务后点「自检并载入契约」'
+      : `现在就可以填写并点「保存」—— 会先暂存在本机，记忆服务上线后自动应用生效 (${lastConfigError || '当前未连接'}）`);
   }
 
   async function loadConfigView() {
     try {
       lastConfigView = await api.getConfig();
       lastConfigError = '';
+      // 有离线暂存 => 连上即自动应用 (幂等: 应用成功即清空)
+      const pending = getSettings().pendingModelConfig;
+      if (pending) {
+        try {
+          const r = await api.saveConfig(pending);
+          lastConfigView = r;
+          getSettings().pendingModelConfig = null;
+          saveSettings();
+          setCfgStatus(`已自动应用此前暂存的模型配置: LLM ${r.llm?.model || '未配置'} · Embedding ${r.embedding?.model || '未配置'}`);
+          toast('success', '暂存的模型配置已应用到服务端');
+        } catch (err) {
+          setCfgStatus(`暂存的模型配置应用失败：${err.message} (暂存保留, 服务可用后重试)`);
+        }
+      }
     } catch (err) {
-      lastConfigView = null;           // 服务不可达/旧版本服务无此端点 => 表单禁用
+      lastConfigView = null;           // 服务不可达/旧版本服务无此端点
       lastConfigError = err.message ?? String(err);
     }
     renderConfigForm();
   }
 
+  function readFormPayload() {
+    const payload = {
+      llm: {
+        baseUrl: document.getElementById('tm_cfg_llm_baseurl').value.trim(),
+        model: document.getElementById('tm_cfg_llm_model').value.trim(),
+      },
+      embedding: {
+        baseUrl: document.getElementById('tm_cfg_embed_baseurl').value.trim(),
+        model: document.getElementById('tm_cfg_embed_model').value.trim(),
+      },
+    };
+    // 密钥只在非空时提交 (空 = 保持不变)
+    const llmKey = document.getElementById('tm_cfg_llm_key').value;
+    const embedKey = document.getElementById('tm_cfg_embed_key').value;
+    if (llmKey) payload.llm.apiKey = llmKey;
+    if (embedKey) payload.embedding.apiKey = embedKey;
+    return payload;
+  }
+
   async function saveConfig() {
     const btn = document.getElementById('tm_cfg_save');
-    const status = document.getElementById('tm_cfg_status');
     if (btn) btn.disabled = true;
     try {
-      // 密钥只在非空时提交 (空 = 保持不变); 其余字段以表单当前值为准
-      const payload = {
-        llm: {
-          baseUrl: document.getElementById('tm_cfg_llm_baseurl').value.trim(),
-          model: document.getElementById('tm_cfg_llm_model').value.trim(),
-        },
-        embedding: {
-          baseUrl: document.getElementById('tm_cfg_embed_baseurl').value.trim(),
-          model: document.getElementById('tm_cfg_embed_model').value.trim(),
-        },
-      };
-      const llmKey = document.getElementById('tm_cfg_llm_key').value;
-      const embedKey = document.getElementById('tm_cfg_embed_key').value;
-      if (llmKey) payload.llm.apiKey = llmKey;
-      if (embedKey) payload.embedding.apiKey = embedKey;
-
+      const payload = readFormPayload();
+      if (!lastConfigView) {
+        // 离线: 暂存, 服务上线后由 loadConfigView 自动应用
+        getSettings().pendingModelConfig = payload;
+        saveSettings();
+        renderConfigForm();
+        setCfgStatus('已暂存 —— 记忆服务上线后会自动应用这份配置并使其生效, 无需再操作');
+        toast('success', '模型配置已暂存, 服务上线后自动生效');
+        return;
+      }
       const r = await api.saveConfig(payload);
       lastConfigView = r;
       renderConfigForm();
       const cap = (d) => (d?.configured ? `${d.provider}/${d.model}` : '未配置');
-      status.textContent = `已保存并生效 (无需重启): LLM ${cap(r.llm)} · Embedding ${cap(r.embedding)}`;
+      setCfgStatus(`已保存并生效 (无需重启): LLM ${cap(r.llm)} · Embedding ${cap(r.embedding)}`);
       toast('success', '模型配置已保存, 正在刷新契约…');
       await reloadMeta();              // 热重建后能力标记会变, 重新拉契约
     } catch (err) {
-      status.textContent = `保存失败：${err.message}`;
+      setCfgStatus(`保存失败：${err.message}`);
       toast('error', `保存模型配置失败：${err.message}`);
     } finally {
-      if (btn) btn.disabled = !lastConfigView;
+      if (btn) btn.disabled = false;
     }
   }
 
