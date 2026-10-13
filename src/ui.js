@@ -655,11 +655,43 @@ export function mountPanel({ api, metaStore, injector, extractor, summarizer, lo
       const snap = await metaStore.refresh();
       renderAll();
       await loadConfigView();          // 模型配置视图跟着契约一起刷新
-      if (snap.loaded) toast('success', `契约已载入：schema ${snap.meta.schemaVersion}`);
-      else toast('error', `契约载入失败：${snap.lastError ?? '未知错误'}`);
+      if (snap.loaded) {
+        stopOfflineRetry();
+        toast('success', `契约已载入：schema ${snap.meta.schemaVersion}`);
+      } else {
+        scheduleOfflineRetry();        // 服务还没起: 挂自动探测, 起来后免手点
+        toast('error', `契约载入失败：${snap.lastError ?? '未知错误'}`);
+      }
     } finally {
       if (btn) btn.disabled = false;
     }
+  }
+
+  // ---------- 离线自动重试 ----------
+  // 服务没开时, 每隔一段时间探测一次; 一旦上线自动载入契约并解锁面板,
+  // 用户从"启动服务"到"面板可用"之间不需要回来点任何按钮。
+  // 只在未连接状态下轮询, 连上即停 —— 不给已连接的日常使用增加任何后台请求。
+  let offlineTimer = null;
+  const OFFLINE_RETRY_MS = 10000;
+
+  function stopOfflineRetry() {
+    if (offlineTimer) { clearInterval(offlineTimer); offlineTimer = null; }
+  }
+
+  function scheduleOfflineRetry() {
+    if (offlineTimer || metaStore.isLoaded()) return;
+    offlineTimer = setInterval(async () => {
+      if (metaStore.isLoaded()) { stopOfflineRetry(); return; }
+      const snap = await metaStore.refresh();       // refresh 内部吞错, 失败即 meta=null
+      if (snap.loaded) {
+        stopOfflineRetry();
+        renderAll();
+        await loadConfigView();
+        toast('success', '记忆服务已连接，契约已自动载入');
+      } else {
+        await loadConfigView();                    // 同步刷新表单禁用态的提示文案
+      }
+    }, OFFLINE_RETRY_MS);
   }
 
   // ---------- 模型配置 (表单在前端, 密钥只发往服务端落盘, 不进酒馆 settings) ----------
@@ -684,7 +716,7 @@ export function mountPanel({ api, metaStore, injector, extractor, summarizer, lo
       // 两种"读不到"要分开说: 服务没起 vs 服务在跑但版本旧 (无 /api/config 端点)
       status.textContent = /404|Not Found/i.test(lastConfigError)
         ? '服务在线但版本较旧 (无模型配置接口) —— 重启记忆服务 (cd server && npm start) 后点「自检并载入契约」'
-        : `服务未连接 (${lastConfigError || '无响应'}) —— 先启动记忆服务 (cd server && npm start)，连接后即可在此填写模型配置`;
+        : `服务未连接 (${lastConfigError || '无响应'}) —— 在终端启动记忆服务 (cd server && npm start)，启动后本面板每 10 秒自动探测、连上即解锁，无需手动刷新`;
       return;
     }
     const { config } = lastConfigView;
@@ -837,6 +869,7 @@ export function mountPanel({ api, metaStore, injector, extractor, summarizer, lo
   renderAll();
   renderConfigForm();
   void loadConfigView();
+  scheduleOfflineRetry();              // 初始未连接时开始自动探测
 
   document.getElementById('tm_reload_meta')?.addEventListener('click', () => void reloadMeta());
   document.getElementById('tm_cfg_save')?.addEventListener('click', () => void saveConfig());
