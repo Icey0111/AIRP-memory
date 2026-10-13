@@ -67,6 +67,17 @@ git clone https://github.com/Icey0111/AIRP-memory <SillyTavern>/public/scripts/e
 > `127.0.0.1` / `[::1]` 的任意端口。若酒馆挂在别的源（反向代理、局域网域名），
 > 把它加进 `server/config.json` 的 `server.cors.origins`。
 
+### 免终端运行：开机自启（Windows）
+
+不想开终端窗口挂服务的话，装一次自启即可（服务登录后**隐藏窗口后台运行**，无任何弹窗）：
+
+- 双击仓库根目录的 **`install-autostart.bat`** —— 一键安装（服务用当前 node 运行，路径随之固化）
+- 双击 **`uninstall-autostart.bat`** —— 一键卸载
+- 也可以手动用别的 node 装：`"node路径" server/autostart-install.mjs`（例如 TauriTavern 自带的 node.exe）
+
+安装后**重启电脑**（或直接双击启动项文件夹里生成的 `tavern-memory-autostart.vbs`）服务即启动；
+面板有离线自动探测，连上就解锁，全程无需终端。
+
 ### 手机 / 局域网访问
 
 服务默认只监听本机（`127.0.0.1`）。手机浏览器访问电脑上的酒馆时，前端跑在手机上，
