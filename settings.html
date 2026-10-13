@@ -20,6 +20,11 @@
           <span class="tm-label">服务地址</span>
           <input id="tm_base_url" class="text_pole" type="text" placeholder="http://127.0.0.1:7780">
         </label>
+        <label class="tm-row">
+          <span class="tm-label">请求超时</span>
+          <input id="tm_timeout" class="text_pole tm-num" type="number" min="1000" max="600000" step="1000">
+          <span class="tm-muted">毫秒 · 抽取类请求会按服务端 llm.timeoutMs 自动放宽</span>
+        </label>
         <div class="tm-row">
           <span class="tm-label">契约与能力</span>
           <span class="tm-actions">

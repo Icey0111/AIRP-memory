@@ -4,8 +4,12 @@
 //   前端不得内置后端的枚举/标签、打分权重与公式、阈值、生效默认值、错误文案。
 //   这些一律运行时从 GET /api/meta 取 (见 src/meta.js)。
 //   本文件里唯一允许存在的"连接信息"是服务地址初值 —— 因为连不上服务时无从获取任何信息。
-import { extension_settings } from '../../../extensions.js';
-import { saveSettingsDebounced } from '../../../../script.js';
+// 注意: 本文件在 src/ 下, 比扩展根深一层, 因此对酒馆模块的相对路径要比 index.js 多一层。
+// 挂载点固定为 /scripts/extensions/third-party/<扩展目录>/ , 故:
+//   /scripts/extensions.js  <- 4 层 ;  /script.js  <- 5 层
+// (与磁盘安装位置无关: 无论是 data/<user>/extensions 还是 public/scripts/extensions/third-party)
+import { extension_settings } from '../../../../extensions.js';
+import { saveSettingsDebounced } from '../../../../../script.js';
 
 export const EXT_NAME = 'tavern-memory';
 export const EXT_KEY = 'tavernMemory';

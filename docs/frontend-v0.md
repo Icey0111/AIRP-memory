@@ -103,6 +103,7 @@ https://github.com/Icey0111/AIRP-memory
 | 分组 | 项 | 说明 |
 |---|---|---|
 | 连接 | 服务地址 | 默认 `http://127.0.0.1:7780`，改动后自动重新拉契约 |
+| 连接 | 请求超时 | 前端默认 15000 ms；抽取类请求会另按服务端 `capabilities.llm.timeoutMs` + 余量放宽 |
 | 注入 | 启用注入 | 关掉则完全不注入，也不请求 `/api/context` |
 | 注入 | 注入位置 / 深度 / 角色 | 主提示词 `IN_PROMPT` 或对话历史内 `IN_CHAT`（深度仅后者生效）；角色 `system`/`user`/`assistant` |
 | 注入 | topK / token 预算 | **填 0 = 用服务端默认**，输入框会显示服务端当前生效值 |
@@ -183,7 +184,44 @@ cd server && npm test     # extract / chunks / stances / routes / meta 五套
 
 ---
 
-## 7. V1 待办
+## 8. 持久化
+
+### 8.1 前端偏好（选择持久化）
+
+面板上每一项都是**即时持久化**的，没有"保存"按钮：
+
+```
+面板控件 → 改 getSettings() 内存对象 → saveSettings() → saveSettingsDebounced()（酒馆）
+                                                        ↓
+                              extension_settings['tavernMemory'] → 酒馆 settings.json
+```
+
+- 存的是酒馆自己的设置文件（`extension_settings` 下的 `tavernMemory` 键），随酒馆设置一起读写；删掉扩展目录不会丢设置，重装即恢复。
+- `ensureSettings()` 每次读取做 `{ ...DEFAULT_SETTINGS, ...已存值 }` 合并，**新增字段自动补默认值**，老配置不会因为少键而崩。
+- 「重置前端设置」只重置这一份偏好，**不触碰服务端任何记忆数据**。
+- 覆盖范围由 `check-static.mjs` 钉死：`DEFAULT_SETTINGS` 的每个键都必须在面板上有对应控件（当前 20 个），以后加字段忘了绑 UI 会直接测试失败。
+- 步骤开关是动态生成的，用事件委托绑定，同样即时落盘。
+
+### 8.2 密钥（不在前端）
+
+**扩展不保存任何密钥**，因为这里不需要：记忆服务默认只绑 `127.0.0.1` 且无鉴权（见 `api.md` §12.4 的 `limits.auth`），前端唯一存的连接信息就是服务地址。
+
+密钥属于**后端进程级文件配置**：
+
+| 内容 | 位置 | 是否入库 |
+|---|---|---|
+| LLM / embedding 的 `apiKey`、`baseUrl`、`model` | `server/config.json` | 否（`.gitignore` 已排除） |
+| 配置模板（占位，无密钥） | `server/config.default.json` | 是 |
+
+注意：
+
+- `config.json` 是**明文** JSON，只靠"不进仓库 + 只在本机"隔离，没有加密。
+- 酒馆的 `settings.json` 同样是明文。所以**不要**图省事把 API Key 填进扩展设置——那等于把密钥放进一个页面脚本随时可读、且会随酒馆设置一起被导出的地方。
+- 若将来要让服务离开 `127.0.0.1`（局域网 / 远程），正确做法是后端持有上游密钥、前端只带一个可撤销的令牌；前端侧依然只存地址与令牌，不存上游 Key。
+
+---
+
+## 9. V1 待办
 
 - 记忆浏览器：一阶记忆 / 画像 / 观察块 / 立场的列表与增删改（`GET /api/memories`、`/api/profiles/:characterId`、`/api/chunks`、`/api/stances`）
 - 遗忘任务面板：`POST /api/forget` 干跑候选 → 确认执行 → `POST /api/forget/restore` 恢复

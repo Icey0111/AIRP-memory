@@ -5,7 +5,9 @@
 //   characterId = 角色卡名字符串 (对应后端 character_profiles.character_id)
 //   注意: 后端 attribute_chunks.entity_id / stances.holder_id 是 people/orgs 表的整数 id,
 //        两者不可混用 —— 本模块只产出上面两种字符串型 id。
-import { getContext } from '../../../extensions.js';
+// 注意: 本文件在 src/ 下, 比扩展根深一层, 对酒馆模块的相对路径要比 index.js 多一层。
+// 挂载点固定为 /scripts/extensions/third-party/<扩展目录>/ , 故 /scripts/extensions.js 是 4 层。
+import { getContext } from '../../../../extensions.js';
 
 export function getChatId() {
   const ctx = getContext();
