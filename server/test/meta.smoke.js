@@ -120,10 +120,26 @@ console.log('\n--- /api/meta 基础 ---');
 const meta = (await req('/api/meta')).body;
 check('/api/meta ok', meta.ok === true && meta.service === 'tavern-memory-server');
 check('schemaVersion / latestSupported 如实上报',
-  meta.schemaVersion === getSchemaVersion(db) && meta.latestSupported === 5,
+  meta.schemaVersion === getSchemaVersion(db) && meta.latestSupported === 6,
   `${meta.schemaVersion}/${meta.latestSupported}`);
 check('runtime.version 透传', meta.version === '9.9.9', String(meta.version));
 check('limits 如实上报绑定地址与鉴权', meta.limits.auth === false && meta.limits.boundTo === '127.0.0.1:7780');
+
+// V6 动词层/命题层: 三轴枚举与边词表经契约下发 (前端不硬编码)
+check('verbLayer 三轴齐备 (时态/来源/状态)',
+  meta.verbLayer?.tenses?.length === 3
+  && meta.verbLayer?.sources?.length === 2
+  && meta.verbLayer?.statuses?.some((s) => s.value === 'pending')
+  && meta.verbLayer?.statuses?.some((s) => s.value === 'realized'),
+  JSON.stringify(meta.verbLayer?.statuses?.map((s) => s.value)));
+check('verbLayer 边词表与注入标签同源 (conditional/alternative 有标签)',
+  meta.verbLayer?.linkRelations?.includes('conditional')
+  && meta.verbLayer?.linkRelations?.includes('alternative')
+  && meta.injectionTables?.linkLabels?.conditional != null
+  && meta.injectionTables?.linkLabels?.alternative != null);
+check('verbLayer 声明对齐口径与嵌套上限',
+  typeof meta.verbLayer?.alignment?.threshold === 'number'
+  && meta.verbLayer?.alignment?.maxNestingDepth === 2);
 
 // ============================================================
 // 2) meta 报告的是"生效值", 不是写死的文档值
@@ -182,9 +198,9 @@ check('公式以文本形式下发 (前端原样展示, 不自己拼)',
   && typeof meta.scoring.forget.formula === 'string');
 check('生效规则文案齐备', ['visibility', 'softDelete', 'supersede', 'stanceEvolution', 'entityIdDuality']
   .every((k) => typeof meta.rules[k] === 'string' && meta.rules[k].length > 0));
-check('注入段落顺序下发 (画像 → 立场 → 关键实体 → 前情提要 → 时间线 → 相关记忆 → 相关细节)',
-  meta.contextSections.length === 7
-  && meta.contextSections.map((s) => s.key).join(',') === 'profile,stances,entities,digest,timeline,memories,chunks',
+check('注入段落顺序下发 (画像 → 立场 → 关键实体 → 前情提要 → 时间线 → 待兑现 → 相关记忆 → 相关细节)',
+  meta.contextSections.length === 8
+  && meta.contextSections.map((s) => s.key).join(',') === 'profile,stances,entities,digest,timeline,pending,memories,chunks',
   JSON.stringify(meta.contextSections.map((s) => s.key)));
 check('段落 order 与数组顺序一致 (前端按 order 展示不会错位)',
   meta.contextSections.every((s, i) => s.order === i + 1));

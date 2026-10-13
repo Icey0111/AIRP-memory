@@ -6,12 +6,12 @@
 //   排版 (对齐/截断/分组留空) 交给 tableRender.ts —— 那里是纯函数, 有快照测试钉死格式。
 //   语义 (标题/行数上限/预算/立场显示规则) 一律取自 domain/constants.js 的 INJECTION_TABLES,
 //   本文件不出现任何可被前端感知的字面量。
-import { INJECTION_TABLES } from '../domain/constants.js';
+import { INJECTION_TABLES, VERB_LAYER } from '../domain/constants.js';
 import { estimateTokens } from '../utils/text.js';
 import { renderTable, createFirstOccurrenceTracker, displayWidth, truncateToWidth } from './tableRender.ts';
 import { getProfile } from './profileService.js';
 import { chatStances } from './stanceService.js';
-import { chatTimeline, keyEntities } from './graphService.js';
+import { chatTimeline, keyEntities, chatPending } from './graphService.js';
 
 const T = INJECTION_TABLES;
 const TL = T.timeline;
@@ -271,6 +271,64 @@ export function eventNote(ev) {
   return '';
 }
 
+/**
+ * 定局标记 (时间线内联用): 取 statuses 的 **short** 文案 (完整 label 太长, 会挤爆单元格)。
+ * 只有"已证实 / 已被拆穿"两种定局值得标 —— 其余 (落空/未激活/作废) 根本不在时间线上。
+ */
+function statusMark(status) {
+  const s = VERB_LAYER.statuses.find((x) => x.value === status);
+  return (s && (s.short ?? s.label)) || '';
+}
+
+/**
+ * 时间线「事件」列的正文 (V6 §10.1 + §4.4):
+ *   叙述者事实 -> 标签 + 事件性注记
+ *   归属声称   -> **必须带来源口吻**「艾拉说：明天去镇上（已证实）」,
+ *                内容取从句 (她说的事), 没有从句则退回实例标签。
+ * 来源口吻不可省: 少了它, 模型会把角色的话当世界真相 —— 比旧版吃书更隐蔽的错误。
+ */
+export function eventText(ev) {
+  const note = eventNote(ev);
+  if (!ev.isProposition) return `${ev.title}${note ? ` ${note}` : ''}`;
+
+  const P = T.proposition;
+  const actor = String(ev.holderName ?? '').trim();
+  // 叙述者对未来的断言没有持有者 -> 不套"某人说"的口吻, 但也要标出未定局
+  const voice = actor ? `${actor}${ev.attitude || P.fallbackAttitude}${P.joiner}` : '';
+  const content = String(ev.comp?.title ?? ev.comp?.verbType ?? '').trim() || P.noContent;
+  const mark = statusMark(ev.status);
+  return `${voice}${content}${mark ? `（${mark}）` : ''}${note ? ` ${note}` : ''}`;
+}
+
+/**
+ * 【待兑现】段 (§10.2): 未决命题清单。
+ * 空则不出段; 行模板与文案取自 constants, 前端只展示不解析。
+ */
+export function buildPendingSection(db, { chatId, maxTokens = T.budgets.pending, limit = T.limits.pendingRows } = {}) {
+  const list = chatPending(db, { chatId, limit });
+  if (!list.length) return { text: '', count: 0, total: 0, tokens: 0, dropped: 0, ids: [] };
+
+  const S = T.pendingSection;
+  const lines = [];
+  let used = estimateTokens(S.header);
+  // 保新丢旧: chatPending 已按 id DESC 取最近 limit 条并按剧情先后返回
+  for (const p of list) {
+    const actor = p.holderName ? `${p.holderName}${p.attitude || T.proposition.fallbackAttitude}${T.proposition.joiner}` : '';
+    const anchor = p.anchor ? `${S.anchorPrefix}${p.anchor}` : '';
+    const line = S.line.replace('{actor}', actor).replace('{content}', p.content).replace('{anchor}', anchor);
+    const cost = estimateTokens(`\n${line}`);
+    if (lines.length > 0 && maxTokens > 0 && used + cost > maxTokens) break;
+    lines.push(line);
+    used += cost;
+  }
+  const text = `${S.header}\n${lines.join('\n')}`;
+  return {
+    text, count: lines.length, total: list.length,
+    tokens: estimateTokens(text), dropped: list.length - lines.length,
+    ids: list.slice(0, lines.length).map((p) => p.id),
+  };
+}
+
 /** 时间节点锚点: label #seq; 章节只在切换时出现一次 (§3.4) */
 export function timeAnchor(ev, prevChapterId) {
   if (ev.timeId == null) return TL.untimedLabel;
@@ -319,14 +377,13 @@ export function buildTimelineTable(db, {
     const sameNode = ev.timeId != null && ev.timeId === prevTimeId;
     prevChapterId = ev.chapterId ?? null;
     prevTimeId = ev.timeId ?? null;
-    const note = eventNote(ev);
     const participants = ev.participants
       .map((p) => entityCell(p.name, { tracker: ctx?.tracker, sketch: sketches.get(p.name), role: p.role }))
       .join(', ');
     rows.push({
       cells: {
         time: sameNode ? '' : anchor,
-        event: `${ev.title}${note ? ` ${note}` : ''}`,
+        event: eventText(ev),
         participants,
         location: ev.locationName ?? '',
         causal: causalText(ev.links),

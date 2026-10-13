@@ -6,10 +6,20 @@
 //
 // 本文件只读、无副作用、零表变更; 单元格文本的格式化留给 injectionService,
 // 语义 (类型标签/排序口径/占位符) 一律取自 domain/constants.js 的 INJECTION_TABLES。
-import { INJECTION_TABLES } from '../domain/constants.js';
+import { INJECTION_TABLES, VERB_LAYER } from '../domain/constants.js';
 
 const T = INJECTION_TABLES.timeline;
 const E = INJECTION_TABLES.entities;
+
+/**
+ * 事实层一律读 **v_facts** 视图 (V6): 视图已过滤 is_active=1 且 source_type='narrator'。
+ * 为什么必须如此: 归属命题 (角色说的/想的) 一旦混进度数统计与事实检索, 模型就会把
+ * "她声称的事"当成"确实发生的事" —— 这是比旧版吃书更隐蔽的错误。视图隔离让它在结构上不可能发生。
+ *
+ * ⚠️ 时间线是**唯一例外**, 它有意读 events 而非视图 (见 chatTimeline 内注释):
+ *    已定局的声称 (已证实/已被拆穿) 本身就是剧情事实, 应当以来源口吻出现在时间线上。
+ */
+const FACT_STATUS_PH = VERB_LAYER.timelineStatuses.map(() => '?').join(', ');
 
 /** 无 time_id 的事件排在最末: 用一个大于任何真实 seq 的哨兵值参与排序 */
 const UNTIMED_ORDER = 2147483647;
@@ -39,20 +49,33 @@ function placeholders(n) {
 export function chatTimeline(db, { chatId, limit = INJECTION_TABLES.limits.timelineRows } = {}) {
   if (!chatId || limit <= 0) return [];
 
+  // 多取一些再筛 (密度控制会丢掉部分行, 见 §10.3)
+  // 注意这里读的是 events 而非 v_facts: 时间线要收"已定局的声称"
+  // (已证实 = 陈述为真; 已被拆穿 = 撒谎/记错)。这两类本身就是剧情事实,
+  // 渲染时会带上来源口吻与定局标记 (injectionService.eventText), 不会伪装成叙述者事实。
+  // 未决 (pending) 与未发生 (落空/未激活/作废) 一律不收 —— 见 constants 的分组口径。
+  const headroom = Math.max(limit * 3, limit + 8);
   const rows = db.prepare(`
     SELECT e.id, e.title, e.process, e.cause_text, e.result_text, e.importance,
+           e.verb_type, e.verb_surface, e.status, e.tense, e.polarity,
+           e.source_type, e.attitude, e.source_person_id, e.parent_instance_id, e.parent_role,
+           hp.name AS holder_name,
            e.time_id,
            t.label  AS time_label, t.seq AS time_seq,
            tp.id    AS chapter_id, tp.label AS chapter_label,
            l.name   AS location_name
     FROM events e
+    LEFT JOIN people       hp ON hp.id = e.source_person_id
     LEFT JOIN time_points t  ON t.id = e.time_id
     LEFT JOIN time_points tp ON tp.id = t.parent_id
     LEFT JOIN locations   l  ON l.id = e.location_id
-    WHERE e.chat_id = ? AND e.is_active = 1
+    WHERE e.chat_id = ? AND e.is_active = 1 AND e.status IN (${FACT_STATUS_PH})
+      -- 子实例 (从句/条件前件/择一候选) 不作为独立行出现: 它们的内容由宿主行承载
+      -- (否则「她说：X」和 X 会各占一行, 同一件事说两遍)
+      AND e.parent_instance_id IS NULL
     ORDER BY COALESCE(t.seq, ${UNTIMED_ORDER}) DESC, e.id DESC
     LIMIT ?
-  `).all(chatId, limit);
+  `).all(chatId, ...VERB_LAYER.timelineStatuses, headroom);
 
   if (rows.length === 0) return [];
   rows.reverse(); // 展示按叙事正序
@@ -82,6 +105,16 @@ export function chatTimeline(db, { chatId, limit = INJECTION_TABLES.limits.timel
     partsByEvent.get(p.event_id).push({ name: p.name, role: p.role });
   }
 
+  // 归属声称的内容在从句里: 渲染成「艾拉说：明天去镇上」, 故把 comp 子实例一并取出
+  const comps = db.prepare(`
+    SELECT id, parent_instance_id, title, verb_type, polarity, status, tense
+    FROM events
+    WHERE parent_instance_id IN (${ph}) AND parent_role = 'comp' AND is_active = 1
+    ORDER BY id
+  `).all(...ids);
+  const compByParent = new Map();
+  for (const c of comps) if (!compByParent.has(c.parent_instance_id)) compByParent.set(c.parent_instance_id, c);
+
   const linksByEvent = new Map();
   const pushLink = (eventId, relation, title) => {
     if (!linksByEvent.has(eventId)) linksByEvent.set(eventId, []);
@@ -98,13 +131,23 @@ export function chatTimeline(db, { chatId, limit = INJECTION_TABLES.limits.timel
     }
   }
 
-  return rows.map((r) => ({
+  const mapped = rows.map((r) => ({
     id: r.id,
     title: r.title,
     process: r.process,
     causeText: r.cause_text,
     resultText: r.result_text,
     importance: r.importance,
+    verbType: r.verb_type,
+    verbSurface: r.verb_surface,
+    status: r.status,
+    tense: r.tense,
+    polarity: r.polarity,
+    sourceType: r.source_type,
+    attitude: r.attitude,
+    holderName: r.holder_name,
+    isProposition: r.source_type === 'attributed',
+    comp: compByParent.get(r.id) ?? null,
     timeId: r.time_id,
     timeLabel: r.time_label,
     timeSeq: r.time_seq,
@@ -114,6 +157,67 @@ export function chatTimeline(db, { chatId, limit = INJECTION_TABLES.limits.timel
     participants: partsByEvent.get(r.id) ?? [],
     links: linksByEvent.get(r.id) ?? [],
   }));
+
+  // 密度控制 (§10.3): 动词实例比旧版"事件"密得多, 只留"值得一提"的。
+  // 保留条件: 有状态变化 / 在因果或条件边上 / 是归属声称 / importance 达标。
+  const minImp = INJECTION_TABLES.timelineDensity.minImportance;
+  const kept = mapped.filter((e) => (
+    (e.resultText && e.resultText.trim())
+    || e.links.length > 0
+    || e.isProposition
+    || e.importance >= minImp
+  ));
+
+  // 筛完仍按最近 limit 个 (保留最近: 时间线是近景视图)
+  return kept.slice(-limit);
+}
+
+/**
+ * 未决命题清单 (【待兑现】段的数据源, §10.2)。
+ *
+ * 口径: 本聊天 status='pending' 的实例 (含叙述者对未来的断言 —— 它同样"尚未发生")。
+ * 内容优先取从句 (她说的事), 没有从句就用实例自身的标签。
+ * 顺序: 保新丢旧 —— 与可见窗口相接的最近未决项最相关, 见 constants.pendingSection.rationale。
+ */
+export function chatPending(db, { chatId, limit = INJECTION_TABLES.limits.pendingRows } = {}) {
+  if (!chatId || limit <= 0) return [];
+  const ph = VERB_LAYER.pendingStatuses.map(() => '?').join(', ');
+  const rows = db.prepare(`
+    SELECT e.id, e.title, e.verb_type, e.tense, e.source_type, e.attitude,
+           hp.name AS holder_name,
+           t.label AS time_label, t.seq AS time_seq
+    FROM events e
+    LEFT JOIN people       hp ON hp.id = e.source_person_id
+    LEFT JOIN time_points t  ON t.id = e.time_id
+    WHERE e.chat_id = ? AND e.is_active = 1 AND e.status IN (${ph})
+    ORDER BY e.id DESC
+    LIMIT ?
+  `).all(chatId, ...VERB_LAYER.pendingStatuses, limit);
+
+  if (rows.length === 0) return [];
+  const ids = rows.map((r) => r.id);
+  const comps = db.prepare(`
+    SELECT parent_instance_id, title, verb_type FROM events
+    WHERE parent_instance_id IN (${placeholders(ids.length)}) AND parent_role = 'comp' AND is_active = 1
+    ORDER BY id
+  `).all(...ids);
+  const compByParent = new Map();
+  for (const c of comps) if (!compByParent.has(c.parent_instance_id)) compByParent.set(c.parent_instance_id, c);
+
+  return rows.map((r) => {
+    const comp = compByParent.get(r.id) ?? null;
+    return {
+      id: r.id,
+      verbType: r.verb_type,
+      tense: r.tense,
+      sourceType: r.source_type,
+      attitude: r.attitude,
+      holderName: r.holder_name,
+      content: comp?.title || comp?.verb_type || r.title,
+      anchor: r.time_label ?? null,
+      timeSeq: r.time_seq ?? null,
+    };
+  }).reverse(); // 展示按剧情先后
 }
 
 /**
@@ -136,14 +240,14 @@ export function keyEntities(db, { chatId, limit = INJECTION_TABLES.limits.entity
     person: db.prepare(`
       SELECT ep.person_id AS id, COUNT(*) AS n
       FROM event_participants ep
-      JOIN events e ON e.id = ep.event_id
-      WHERE e.chat_id = ? AND e.is_active = 1
+      JOIN v_facts e ON e.id = ep.event_id
+      WHERE e.chat_id = ?
       GROUP BY ep.person_id
     `).all(chatId),
     location: db.prepare(`
       SELECT e.location_id AS id, COUNT(*) AS n
-      FROM events e
-      WHERE e.chat_id = ? AND e.is_active = 1 AND e.location_id IS NOT NULL
+      FROM v_facts e
+      WHERE e.chat_id = ? AND e.location_id IS NOT NULL
       GROUP BY e.location_id
     `).all(chatId),
     item: db.prepare(`
@@ -166,14 +270,14 @@ export function keyEntities(db, { chatId, limit = INJECTION_TABLES.limits.entity
     person: db.prepare(`
       SELECT ep.person_id AS id, COUNT(*) AS n
       FROM event_participants ep
-      JOIN events e ON e.id = ep.event_id
-      WHERE e.chat_id = ? AND e.is_active = 1${winClause}
+      JOIN v_facts e ON e.id = ep.event_id
+      WHERE e.chat_id = ?${winClause}
       GROUP BY ep.person_id
     `).all(chatId, ...win),
     location: db.prepare(`
       SELECT e.location_id AS id, COUNT(*) AS n
-      FROM events e
-      WHERE e.chat_id = ? AND e.is_active = 1 AND e.location_id IS NOT NULL${winClause}
+      FROM v_facts e
+      WHERE e.chat_id = ? AND e.location_id IS NOT NULL${winClause}
       GROUP BY e.location_id
     `).all(chatId, ...win),
   } : {};

@@ -135,9 +135,10 @@ export const CONTEXT_SECTIONS = [
   { order: 2, key: 'stances', label: '关系立场', description: '常驻; 当前聊天生效立场的有向边清单, 表露列承载二阶语义' },
   { order: 3, key: 'entities', label: '关键实体', description: '常驻限量; 人物/地点/物品/组织的规范速写与复现计数' },
   { order: 4, key: 'digest', label: '前情提要', description: '按楼层顺序拼接的摘要链, 常驻且不参与相似度打分' },
-  { order: 5, key: 'timeline', label: '事件时间线', description: '常驻限量; 以时间节点为锚的事件邻接视图, 因果边标注' },
-  { order: 6, key: 'memories', label: '相关记忆', description: 'FTS 召回 (已排除摘要), 按打分顺序填预算' },
-  { order: 7, key: 'chunks', label: '相关细节', description: '向量召回的观察块' },
+  { order: 5, key: 'timeline', label: '事件时间线', description: '常驻限量; 事件邻接视图, 因果边标注; 归属声称带来源口吻与定局标记' },
+  { order: 6, key: 'pending', label: '待兑现', description: '常驻限量; 未决命题 (承诺/约定/威胁/线索), 独立预算, 空则不出段' },
+  { order: 7, key: 'memories', label: '相关记忆', description: 'FTS 召回 (已排除摘要), 按打分顺序填预算' },
+  { order: 8, key: 'chunks', label: '相关细节', description: '向量召回的观察块' },
 ];
 
 // ============================================================
@@ -163,6 +164,7 @@ export const INJECTION_TABLES = {
     stances: '【关系立场】',
     entities: '【关键实体】',
     timeline: '【事件时间线】',
+    pending: '【待兑现】',
     memories: '【相关记忆】',
     chunks: '【相关细节】',
   },
@@ -172,6 +174,7 @@ export const INJECTION_TABLES = {
     stanceRows: 20,
     entityRows: 15,
     timelineRows: 12,
+    pendingRows: 8,
     /** 单元格截断 (显示宽, 中文按 2 计); 0 = 不截断 */
     cellMaxWidth: 60,
   },
@@ -181,6 +184,7 @@ export const INJECTION_TABLES = {
     stances: 400,
     entities: 400,
     timeline: 500,
+    pending: 300,
   },
   /** 强度显示三档分界: < low 低, < high 中, 其余高 (避免 0.57 这种噪声数字) */
   intensityBands: { low: 0.34, high: 0.67 },
@@ -201,6 +205,36 @@ export const INJECTION_TABLES = {
   /** 复现计数前缀 (L2 折叠链头专用: ×3 = 该行为被反复观察到 3 次) */
   recurrenceMark: '×',
   /**
+   * 时间线行密度控制 (V6 §10.3): 动词实例的密度远高于旧版"事件"
+   * (10 层剧情可能抽出 20+ 条), 不筛的话时间线会被琐碎实例淹没。
+   * 保留条件 (任一满足): 有状态变化 / 在因果或条件边上 / 是归属声称 / importance ≥ 阈值。
+   */
+  timelineDensity: {
+    minImportance: 0.45,
+    rule: '有状态变化 或 在因果/条件边上 或 是归属声称 或 importance ≥ minImportance 才进时间线',
+  },
+  /**
+   * 归属声称在时间线里的渲染 (§4.4 硬规则的落地): **必须带来源口吻**,
+   * 并标出定局 (已证实 / 已被拆穿)。绝不能以叙述者口吻出场 ——
+   * 否则模型会把角色的话当世界真相, 而这种错误比旧版吃书更隐蔽。
+   */
+  proposition: {
+    /** 情态缺失时的兜底口吻 */
+    fallbackAttitude: '声称',
+    joiner: '：',
+    noContent: '（内容未抽出）',
+  },
+  /** 【待兑现】段 (V6 §10.2): 未决命题清单, 独立预算, 空则不出段 */
+  pendingSection: {
+    header: '【待兑现】',
+    /** 行模板: {actor} 持有者(可空) / {content} 内容 / {anchor} 时间锚(可空) */
+    line: '- {actor}{content}（未决{anchor}）',
+    anchorPrefix: ' · ',
+    rationale:
+      '承诺/约定/威胁/悬而未决的线索 —— 这批信息原先只存在于摘要的自由文本里, 无法核对、'
+      + '无法标记、无法统计。结构化之后, 摘要层的压力卸掉一半。保新丢旧 (与楼上窗口相接的最近未决项最重要)。',
+  },
+  /**
    * 【事件时间线】的事件间因果标注 (§3.4)。
    * 每条 event_links 边只渲染一次 (渲染在"它是谁的成因/前承"那一行), 避免同一条边出现两遍:
    *   caused    入边 -> ← 起因   | led_to 出边 -> → 引出
@@ -211,6 +245,8 @@ export const INJECTION_TABLES = {
     led_to: '→ 引出',
     preceded: '⇠ 前承',
     contradicts: '⇄ 矛盾',
+    conditional: '⇢ 条件',
+    alternative: '∨ 择一',
   },
   /** 时间线单元格式 (§3.4): 节点锚点 = label + seqMark + seq; 无时间节点的事件给未定时占位 */
   timeline: {
@@ -263,6 +299,150 @@ export const INJECTION_TABLES = {
   derivedMark: '※',
   /** 表格渲染异常时的退化路径 (永远不断供) */
   fallbackOnError: 'bullets',
+};
+
+// ============================================================
+// 动词层与命题层 (V6, 依据 docs/verb-layer.md)
+// ============================================================
+//
+// 核心命题: **存原语与边, 其余都是视图**。
+//   "事件"不是一个语言原语 (它是"谁—做了什么—对谁—何时何地—结果如何"的打包, 必然模糊),
+//   动词/谓语才是 —— 题元语法: 谓语是枢纽, 施事/受事/时间/地点是它的边。
+//
+// 三根正交轴 (取代初版的 realis/irrealis 二元):
+//   ① 时态定位 (只决定"到没到点")
+//   ② 担保来源 (决定真值归谁 —— 撒谎因此才可表达)  ← 与①正交
+//   ③ 对齐状态 (能被后来的事实改写)
+// 另有极性 (参与对齐: ¬P 匹配到事实 P => 「被推翻」, 不是「兑现」)。
+//
+// 跨端可见的一切 (枚举/标签/阈值/默认值/公式) 只在本文件定义一次, 经 /api/meta 下发;
+// 前端与 service 均不得另写一份。
+export const VERB_LAYER = {
+  /** 题元角色 (受约束建议值) —— 落在 event_participants.role */
+  thematicRoles: [
+    { value: '发起者', label: '发起者' },
+    { value: '参与者', label: '参与者' },
+    { value: '对象', label: '对象' },
+    { value: '与事', label: '与事' },
+    { value: '受害者', label: '受害者' },
+    { value: '目击者', label: '目击者' },
+    { value: '工具', label: '工具' },
+    { value: '提及', label: '提及' },
+  ],
+  /**
+   * 动词受控词表 (建议值, 非强制)。归一用 verb_type, 原文永远保留在 verb_surface。
+   * 与实体层同一原则: 自由字符串入库 + 建议值做输入提示, 不因词表之外就丢弃。
+   */
+  verbSuggestions: [
+    '说', '问', '答', '看', '听', '摸', '去', '来', '给予', '取', '转交',
+    '承诺', '威胁', '救助', '伤害', '隐瞒', '发现', '决定', '离开', '战斗',
+  ],
+  polarities: [
+    { value: '+', label: '肯定' },
+    { value: '-', label: '否定', description: '参与对齐: ¬P 匹配到事实 P 判「被推翻」' },
+  ],
+  /**
+   * 轴②担保来源。**这是不可靠叙述的落点**: 叙述者断言进事实层;
+   * 归属给某人的命题真值挂在持有者身上 (可能撒谎、可能记错)。
+   */
+  sources: [
+    {
+      value: 'narrator', label: '叙述者断言', description: '进事实层 (v_facts); 是唯一可触发实体归并的来源',
+    },
+    {
+      value: 'attributed', label: '归属给某人',
+      description: '进命题层 (v_propositions); 必须带持有者与情态; 不得触发实体归并',
+    },
+  ],
+  /** 情态 (仅 attributed): 持有者对该命题的态度 */
+  attitudes: [
+    { value: '说', label: '说' },
+    { value: '认为', label: '认为' },
+    { value: '相信', label: '相信' },
+    { value: '希望', label: '希望' },
+    { value: '怀疑', label: '怀疑' },
+    { value: '假装', label: '假装' },
+    { value: '不知', label: '不知' },
+  ],
+  /** 轴①时态定位: 只决定"到没到点", 与来源正交 */
+  tenses: [
+    { value: 'past', label: '过去' },
+    { value: 'now', label: '现在' },
+    { value: 'future', label: '未来' },
+  ],
+  /**
+   * 轴③对齐状态。对齐 = 命题与事实的匹配, 是**同一操作的双向形式**:
+   *   未来命题到点匹配事实 -> realized; 被引述的过去命题被确认 -> realized(证实);
+   *   被否证 -> refuted(撒谎/记错); 极性冲突 -> refuted(被推翻);
+   *   条件未成立 -> inactive; 择一未选中 -> voided。
+   */
+  statuses: [
+    { value: 'asserted', label: '叙述者事实', short: '事实', description: 'narrator 的缺省状态' },
+    { value: 'pending', label: '未决', short: '未决', description: 'attributed 的缺省状态, 等待与事实对齐' },
+    { value: 'realized', label: '已兑现 / 已证实', short: '已证实' },
+    { value: 'failed', label: '已落空', short: '已落空' },
+    { value: 'inactive', label: '未激活（条件未成立）', short: '未激活' },
+    { value: 'refuted', label: '被推翻（极性冲突 / 被否证）', short: '已被拆穿' },
+    { value: 'voided', label: '已作废（择一未选中）', short: '已作废' },
+  ],
+  /** 嵌套引述的角色 (parent_role): 深度上限见 alignment.maxNestingDepth */
+  parentRoles: [
+    { value: 'comp', label: '命题宾语（从句）' },
+    { value: 'cond', label: '条件前件' },
+    { value: 'alt', label: '择一候选' },
+  ],
+  /**
+   * event_links.relation 全集。
+   * ⚠️ 必须与 db/schema.sql 与迁移里的 CHECK 词表一致 —— test/verbs.smoke.js 有断言钉死。
+   */
+  linkRelations: ['caused', 'led_to', 'preceded', 'contradicts', 'conditional', 'alternative'],
+  /** 写入缺省值 */
+  defaults: {
+    sourceType: 'narrator',
+    /** 归属命题的缺省状态: 未决 (等待对齐) */
+    attributedStatus: 'pending',
+    /** 叙述者对未来的断言: 也是未决 (叙述者担保, 但尚未发生) */
+    narratorFutureStatus: 'pending',
+    polarity: '+',
+    tense: 'past',
+    status: 'asserted',
+  },
+  /** 对齐口径 (V6-3 实现; 这里是跨端可见的契约描述) */
+  alignment: {
+    threshold: 0.8,
+    /** 打分权重: 动词必须相同(硬条件), 其余是加权项 */
+    weights: {
+      verb: 0.6,
+      thematicOverlap: 0.3,
+      location: 0.1,
+    },
+    formula: 'score = 0.6 × 动词匹配 + 0.3 × 题元重叠率 + 0.1 × 地点相同; 动词不同直接不匹配',
+    rule: '匹配 = 同动词 + 题元重叠达阈值 + 到点; 极性相同 -> 已兑现/已证实, 极性相反 -> 被推翻',
+    principle: '宁缺勿错: 不确定就保持未对齐 —— 误判兑现比漏判更有害 (模型会把没发生的事当真)',
+    maxNestingDepth: 2,
+    /**
+     * 「到点」口径: 未来命题所在时间节点之后又出现了新的时间节点 => 那个"明天"已经过去。
+     * 无时间锚的命题不判到点 (宁可留着未决)。
+     */
+    dueRule: '未来命题的 time_id 之后存在更晚的时间节点 => 已到点; 无时间锚不判',
+    /** 条件命题的后果何时转为「未激活」: 条件被判定落空/被推翻/作废时 */
+    inactiveRule: '条件前件落空/被推翻/作废 => 后果转未激活',
+    /** 择一: 同一父实例下的 alt 候选中有一个兑现, 其余作废 */
+    alternativeRule: '同一父实例下的 alt 候选中一个已兑现 => 其余作废',
+  },
+  /**
+   * 注入分组口径 (由 /api/meta 下发, 前端与渲染层同源):
+   *   timelineStatuses  进【事件时间线】—— 已发生的事实、已证实的声称、已被拆穿的声称
+   *                     (被拆穿的谎话是人物证据, 值得模型看见)
+   *   pendingStatuses   进【待兑现】—— 未决命题 (承诺/约定/威胁/悬而未决的线索)
+   *   unrealizedStatuses 两边都不进 —— 它们表示"没发生" (落空/未激活/作废)
+   *
+   * 为什么未决的不进时间线: 时间线读作"发生过什么", 塞进未发生的会诱导模型当成事实;
+   * 而未决项自身有专门的前瞻段落, 不必也不该在时间线里出现两次。
+   */
+  timelineStatuses: ['asserted', 'realized', 'refuted'],
+  pendingStatuses: ['pending'],
+  unrealizedStatuses: ['failed', 'inactive', 'voided'],
 };
 
 // ============================================================
@@ -448,7 +628,7 @@ export const ENDPOINTS = [
   { method: 'POST', path: '/api/context', summary: '注入组装, 前端每轮生成前的主入口', needsLlm: false, needsEmbedding: false, degrade: 'silent', degradeNote: '未配 embedding 或 embedding 服务故障时无【相关细节】段 (故障原因经 chunkError 字段上报), 仍返回画像与 FTS 记忆' },
   { method: 'POST', path: '/api/retrieve', summary: '三路召回原始结果 (调试用)', needsLlm: false, needsEmbedding: false, degrade: 'silent', degradeNote: '未配 embedding 时响应无 chunkHits 字段; embedding 服务故障时返回 chunkError 而非 400' },
 
-  { method: 'POST', path: '/api/extract', summary: '二阶六要素抽取 (人物/地点/时间点/事件/因果边)', needsLlm: true, needsEmbedding: false, degrade: 'error', degradeNote: 'LLM 未配置时 400' },
+  { method: 'POST', path: '/api/extract', summary: '述谓实例抽取 (谁—动词—谁 + 来源/时态/极性, 含人物/地点/时间点/因果边)', needsLlm: true, needsEmbedding: false, degrade: 'error', degradeNote: 'LLM 未配置时 400' },
   { method: 'POST', path: '/api/extract-attributes', summary: '三阶属性观察抽取', needsLlm: true, needsEmbedding: true, degrade: 'error', degradeNote: 'LLM 或 embedding 未配置时 400' },
   { method: 'POST', path: '/api/extract-stances', summary: '立场抽取与演化', needsLlm: true, needsEmbedding: false, degrade: 'error', degradeNote: 'LLM 未配置时 400' },
   { method: 'POST', path: '/api/profiles-derive', summary: '画像重归纳 (观察块 -> 生效画像)', needsLlm: true, needsEmbedding: false, degrade: 'error', degradeNote: '目标人物无生效观察块时短路返回空, 不触达 LLM (此时即便未配 LLM 也返回 200)' },

@@ -1,0 +1,95 @@
+<svg viewBox="0 0 680 542" width="100%" role="img" xmlns="http://www.w3.org/2000/svg">
+  <title>V6 图式总览：原语与边、三轴、视图隔离与对齐、派生视图</title>
+  <desc>实线线程与虚线未然线程并列，实例带三轴与极性，事实与命题经视图隔离再对齐，派生视图投影到注入</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+
+  <text x="40" y="48" font-size="14" font-weight="500" fill="#2C2C2A" font-family="sans-serif">V6 图式总览：存原语与边，其余都是视图</text>
+
+  <rect x="40" y="72" width="600" height="136" rx="16" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+  <text x="56" y="92" font-size="13" font-weight="500" fill="#0C447C" font-family="sans-serif">① 原语与边 —— 横轴是语序，时间永远第一</text>
+
+  <path d="M56 117 L620 117" stroke="#85B7EB" stroke-width="1" fill="none" marker-end="url(#arrow)"/>
+  <rect x="56" y="104" width="84" height="26" rx="8" fill="#FFFFFF" stroke="#185FA5" stroke-width="0.5"/>
+  <text x="98" y="117" text-anchor="middle" font-size="11" font-weight="500" fill="#0C447C" font-family="sans-serif" dominant-baseline="central">第三夜 #7</text>
+  <rect x="148" y="104" width="76" height="26" rx="8" fill="#FFFFFF" stroke="#B4B2A9" stroke-width="0.5"/>
+  <text x="186" y="117" text-anchor="middle" font-size="11" fill="#2C2C2A" font-family="sans-serif" dominant-baseline="central">夜莺酒馆</text>
+  <rect x="232" y="104" width="64" height="26" rx="8" fill="#FFFFFF" stroke="#B4B2A9" stroke-width="0.5"/>
+  <text x="264" y="117" text-anchor="middle" font-size="11" fill="#2C2C2A" font-family="sans-serif" dominant-baseline="central">艾拉</text>
+  <rect x="304" y="104" width="60" height="26" rx="8" fill="#FAEEDA" stroke="#BA7517" stroke-width="0.5"/>
+  <text x="334" y="117" text-anchor="middle" font-size="11" font-weight="500" fill="#633806" font-family="sans-serif" dominant-baseline="central">〔说〕</text>
+  <rect x="372" y="104" width="64" height="26" rx="8" fill="#FFFFFF" stroke="#B4B2A9" stroke-width="0.5"/>
+  <text x="404" y="117" text-anchor="middle" font-size="11" fill="#2C2C2A" font-family="sans-serif" dominant-baseline="central">主角</text>
+  <text x="448" y="117" font-size="11" fill="#185FA5" font-family="sans-serif" dominant-baseline="central">realis（叙述者断言）</text>
+
+  <path d="M56 161 L620 161" stroke="#EF9F27" stroke-width="1" stroke-dasharray="4 3" fill="none" marker-end="url(#arrow)"/>
+  <rect x="56" y="148" width="84" height="26" rx="8" fill="#FFFFFF" stroke="#185FA5" stroke-width="0.5"/>
+  <text x="98" y="161" text-anchor="middle" font-size="11" font-weight="500" fill="#0C447C" font-family="sans-serif" dominant-baseline="central">第四日 #8</text>
+  <rect x="148" y="148" width="76" height="26" rx="8" fill="#FFFFFF" stroke="#B4B2A9" stroke-width="0.5" stroke-dasharray="3 3"/>
+  <text x="186" y="161" text-anchor="middle" font-size="11" fill="#888780" font-family="sans-serif" dominant-baseline="central">—</text>
+  <rect x="232" y="148" width="64" height="26" rx="8" fill="#FFFFFF" stroke="#B4B2A9" stroke-width="0.5"/>
+  <text x="264" y="161" text-anchor="middle" font-size="11" fill="#2C2C2A" font-family="sans-serif" dominant-baseline="central">艾拉</text>
+  <rect x="304" y="148" width="60" height="26" rx="8" fill="#FAEEDA" stroke="#BA7517" stroke-width="0.5"/>
+  <text x="334" y="161" text-anchor="middle" font-size="11" font-weight="500" fill="#633806" font-family="sans-serif" dominant-baseline="central">〔去〕</text>
+  <rect x="372" y="148" width="64" height="26" rx="8" fill="#FFFFFF" stroke="#B4B2A9" stroke-width="0.5"/>
+  <text x="404" y="161" text-anchor="middle" font-size="11" fill="#2C2C2A" font-family="sans-serif" dominant-baseline="central">镇上</text>
+  <text x="448" y="161" font-size="11" fill="#BA7517" font-family="sans-serif" dominant-baseline="central">irrealis（归属·未决）</text>
+
+  <path d="M334 130 L334 148" stroke="#888780" stroke-width="0.5" stroke-dasharray="3 3" fill="none"/>
+  <text x="340" y="142" font-size="11" fill="#5F5E5A" font-family="sans-serif">comp</text>
+  <text x="56" y="196" font-size="11" fill="#5F5E5A" font-family="sans-serif">边表：参与者（题元角色）· 因果 ←起因 →引出 ⇠前承 ⇄矛盾 · 条件 ⇢ · 择一 ∨</text>
+
+  <rect x="40" y="222" width="600" height="84" rx="16" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.5"/>
+  <text x="56" y="242" font-size="13" font-weight="500" fill="#2C2C2A" font-family="sans-serif">② 每个实例都带：三根正交轴 + 极性 + 嵌套</text>
+  <rect x="56" y="252" width="96" height="36" rx="8" fill="#FFFFFF" stroke="#B4B2A9" stroke-width="0.5"/>
+  <text x="104" y="268" text-anchor="middle" font-size="11" fill="#2C2C2A" font-family="sans-serif">时态</text>
+  <text x="104" y="283" text-anchor="middle" font-size="11" fill="#5F5E5A" font-family="sans-serif">过去 现在 未来</text>
+  <rect x="164" y="252" width="116" height="36" rx="8" fill="#FFFFFF" stroke="#B4B2A9" stroke-width="0.5"/>
+  <text x="222" y="268" text-anchor="middle" font-size="11" fill="#2C2C2A" font-family="sans-serif">来源</text>
+  <text x="222" y="283" text-anchor="middle" font-size="11" fill="#5F5E5A" font-family="sans-serif">叙述者 ｜ 归属+情态</text>
+  <rect x="292" y="252" width="156" height="36" rx="8" fill="#FFFFFF" stroke="#B4B2A9" stroke-width="0.5"/>
+  <text x="370" y="268" text-anchor="middle" font-size="11" fill="#2C2C2A" font-family="sans-serif">状态</text>
+  <text x="370" y="283" text-anchor="middle" font-size="11" fill="#5F5E5A" font-family="sans-serif">未决 · 兑现 · 落空 · 未激活</text>
+  <rect x="460" y="252" width="64" height="36" rx="8" fill="#FFFFFF" stroke="#B4B2A9" stroke-width="0.5"/>
+  <text x="492" y="268" text-anchor="middle" font-size="11" fill="#2C2C2A" font-family="sans-serif">极性</text>
+  <text x="492" y="283" text-anchor="middle" font-size="11" fill="#5F5E5A" font-family="sans-serif">＋ / －</text>
+  <rect x="536" y="252" width="88" height="36" rx="8" fill="#FFFFFF" stroke="#B4B2A9" stroke-width="0.5"/>
+  <text x="580" y="268" text-anchor="middle" font-size="11" fill="#2C2C2A" font-family="sans-serif">嵌套</text>
+  <text x="580" y="283" text-anchor="middle" font-size="11" fill="#5F5E5A" font-family="sans-serif">comp cond alt</text>
+  <text x="56" y="302" font-size="11" fill="#5F5E5A" font-family="sans-serif">归属命题必带持有者与情态 —— 注入以来源口吻出场（艾拉声称：…（未证实））</text>
+
+  <rect x="40" y="320" width="600" height="112" rx="16" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+  <text x="56" y="340" font-size="13" font-weight="500" fill="#04342C" font-family="sans-serif">③ 视图隔离与对齐（命题 ⇄ 事实）</text>
+  <rect x="56" y="350" width="170" height="30" rx="8" fill="#FFFFFF" stroke="#85B7EB" stroke-width="0.5"/>
+  <text x="141" y="365" text-anchor="middle" font-size="11" fill="#0C447C" font-family="sans-serif" dominant-baseline="central">v_facts · 叙述者断言</text>
+  <text x="266" y="365" font-size="12" fill="#0F6E56" font-family="sans-serif" dominant-baseline="central">⇄ 对齐</text>
+  <rect x="300" y="350" width="190" height="30" rx="8" fill="#FFFFFF" stroke="#BA7517" stroke-width="0.5"/>
+  <text x="395" y="365" text-anchor="middle" font-size="11" fill="#633806" font-family="sans-serif" dominant-baseline="central">v_propositions · 归属命题</text>
+  <text x="502" y="365" font-size="11" fill="#5F5E5A" font-family="sans-serif" dominant-baseline="central">同表 · 视图分路</text>
+  <rect x="56" y="390" width="170" height="26" rx="8" fill="#FFFFFF" stroke="#9FE1CB" stroke-width="0.5"/>
+  <text x="141" y="403" text-anchor="middle" font-size="11" fill="#2C2C2A" font-family="sans-serif" dominant-baseline="central">兑现 / 证实</text>
+  <rect x="238" y="390" width="190" height="26" rx="8" fill="#FFFFFF" stroke="#9FE1CB" stroke-width="0.5"/>
+  <text x="333" y="403" text-anchor="middle" font-size="11" fill="#2C2C2A" font-family="sans-serif" dominant-baseline="central">证伪（撒谎·记错）/ 被推翻</text>
+  <rect x="440" y="390" width="184" height="26" rx="8" fill="#FFFFFF" stroke="#9FE1CB" stroke-width="0.5"/>
+  <text x="532" y="403" text-anchor="middle" font-size="11" fill="#2C2C2A" font-family="sans-serif" dominant-baseline="central">未激活 · 择一作废</text>
+  <text x="56" y="426" font-size="11" fill="#0F6E56" font-family="sans-serif">实体归并只认 narrator —— 人物层的“X 是 Y”一律落为命题</text>
+
+  <rect x="40" y="446" width="600" height="76" rx="16" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.5"/>
+  <text x="56" y="466" font-size="13" font-weight="500" fill="#633806" font-family="sans-serif">④ 派生视图（不是节点）→ 注入投影</text>
+  <rect x="56" y="476" width="118" height="36" rx="8" fill="#FFFFFF" stroke="#EF9F27" stroke-width="0.5"/>
+  <text x="115" y="492" text-anchor="middle" font-size="11" fill="#2C2C2A" font-family="sans-serif">事件 = 簇</text>
+  <text x="115" y="507" text-anchor="middle" font-size="11" fill="#5F5E5A" font-family="sans-serif">同节点+参与者</text>
+  <rect x="184" y="476" width="118" height="36" rx="8" fill="#FFFFFF" stroke="#EF9F27" stroke-width="0.5"/>
+  <text x="243" y="492" text-anchor="middle" font-size="11" fill="#2C2C2A" font-family="sans-serif">摘要 = 路径压缩</text>
+  <text x="243" y="507" text-anchor="middle" font-size="11" fill="#5F5E5A" font-family="sans-serif">覆盖楼层或路径</text>
+  <rect x="312" y="476" width="118" height="36" rx="8" fill="#FFFFFF" stroke="#EF9F27" stroke-width="0.5"/>
+  <text x="371" y="492" text-anchor="middle" font-size="11" fill="#2C2C2A" font-family="sans-serif">通路编号 = 坐标</text>
+  <text x="371" y="507" text-anchor="middle" font-size="11" fill="#5F5E5A" font-family="sans-serif">#seq.k</text>
+  <rect x="440" y="476" width="118" height="36" rx="8" fill="#FFFFFF" stroke="#EF9F27" stroke-width="0.5"/>
+  <text x="499" y="492" text-anchor="middle" font-size="11" fill="#2C2C2A" font-family="sans-serif">待兑现清单</text>
+  <text x="499" y="507" text-anchor="middle" font-size="11" fill="#5F5E5A" font-family="sans-serif">承诺·约定·伏笔</text>
+  <text x="568" y="499" font-size="11" fill="#633806" font-family="sans-serif" dominant-baseline="central">→ 注入七段</text>
+</svg>

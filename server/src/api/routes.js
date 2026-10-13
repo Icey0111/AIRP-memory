@@ -10,7 +10,7 @@ import {
   getProfile, upsertProfileEntry, deleteProfileEntry,
 } from '../services/profileService.js';
 import { searchMemories, searchChunks, assembleContext } from '../services/retrievalService.js';
-import { extractSixElements } from '../services/extractionService.js';
+import { extractInstances } from '../services/extractionService.js';
 import { addChunk, listChunks, softDeleteChunk, stripEmbedding } from '../services/chunkService.js';
 import { extractAttributes, deriveProfile } from '../services/chunkExtractionService.js';
 import { addStance, listStances, softDeleteStance, stanceOverview } from '../services/stanceService.js';
@@ -25,7 +25,7 @@ const CORE_TABLES = [
   'memories', 'memory_tags', 'memory_links', 'character_profiles',
   'people', 'locations', 'time_points', 'events', 'event_participants',
   'event_links', 'memory_entity_refs', 'attribute_chunks',
-  'items', 'orgs', 'stances', 'retrieval_log',
+  'items', 'orgs', 'stances', 'value_nodes', 'retrieval_log',
 ];
 
 // 统一错误包装: service 抛 Error -> 400, 未知异常 -> 500
@@ -208,11 +208,11 @@ export function createRouter(db, { llm = null, embed = null, retrieval = {}, run
     });
   }));
 
-  // ---------- 二阶六要素抽取 (LLM) ----------
+  // ---------- 述谓实例抽取 (V6: 谁—动词—谁 + 来源/时态/极性) ----------
   router.post('/api/extract', handleAsync(async (req, res) => {
     if (!llm) throw new Error('LLM 客户端未初始化');
     const { chatId, text, sourceMessageIds, writeMemory } = req.body ?? {};
-    res.json(await extractSixElements(db, llm, {
+    res.json(await extractInstances(db, llm, {
       chatId, text,
       sourceMessageIds: sourceMessageIds ?? [],
       writeMemory: writeMemory !== false,

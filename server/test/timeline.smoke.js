@@ -294,10 +294,16 @@ check('关掉表格后不再出现关键实体/时间线段 (它们本来就是�
 
 // ===============================================================
 console.log('\n--- 抽取层 prompt 约束 (压缩要在入库时就做, 渲染层救不回来) ---');
-check('要素抽取 prompt 含信息正交性条款 (事件正文禁止写时间/人物/地点)',
-  EXTRACT_PROMPT.includes('信息正交性') && EXTRACT_PROMPT.includes('禁止写入时间、人物名、地点'), '');
-check('要素抽取 prompt 含琐事排除条款 (日常重复行为不建事件)',
-  EXTRACT_PROMPT.includes('不要建事件') && EXTRACT_PROMPT.includes('琐事'), '');
+check('述谓抽取 prompt 含信息正交性条款 (正文不复述时间/人物/地点)',
+  EXTRACT_PROMPT.includes('不要复述时间、人物、地点'), '');
+// V6: 「琐事不建事件」的黑名单已被动词层取代 —— 重复日常照原样抽, 折叠交给写入管线
+// (旧判据"去掉这条会不会少一个因果环节"是分类不可判定的自白, 见 docs/verb-layer.md §2)
+check('述谓抽取 prompt 要求重复日常照原样抽 (折叠交给管线, 不自己合并)',
+  EXTRACT_PROMPT.includes('重复的日常行为照原样抽') && EXTRACT_PROMPT.includes('不要自己合并'), '');
+check('述谓抽取 prompt 不再有"琐事不建事件"黑名单 (分类判据已废弃)',
+  !EXTRACT_PROMPT.includes('这些不是叙事事件') && !EXTRACT_PROMPT.includes('不要建事件'), '');
+check('述谓抽取 prompt 含来源担保条款 (叙述者断言 vs 归属内容)',
+  EXTRACT_PROMPT.includes('source_type="narrator"') && EXTRACT_PROMPT.includes('source_type="attributed"'), '');
 check('属性抽取 prompt 含 habit 归类条款 (重复日常归行为观察)',
   CHUNK_PROMPT.includes('habit') && CHUNK_PROMPT.includes('稳定行为模式'), '');
 check('属性抽取 prompt 要求原样重复抽取 (折叠交给写入管线, 不自己合并)',

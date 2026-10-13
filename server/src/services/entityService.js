@@ -1,5 +1,6 @@
 // 二阶实体: find-or-create (别名归并) / 时间线 / 事件与因果边
 import { now, clamp01 } from '../utils/text.js';
+import { VERB_LAYER } from '../domain/constants.js';
 
 // ---------- 别名匹配: 主称呼相等 或 别名数组中包含 ----------
 function findPersonByNameOrAlias(db, name) {
@@ -12,19 +13,29 @@ function findPersonByNameOrAlias(db, name) {
   `).get({ name });
 }
 
-function mergeAliases(existing, newAliases) {
+function mergeAliasList(existing, newAliases) {
   const cur = JSON.parse(existing.aliases || '[]');
   const merged = [...new Set([...cur, ...newAliases.filter((a) => a && a !== existing.name)])];
   return JSON.stringify(merged);
 }
 
-export function findOrCreatePerson(db, { name, aliases = [], personType = 'npc' }) {
+/**
+ * find-or-create 人物 (别名归并)。
+ *
+ * ⚠️ `mergeAliases = false` 是 V6 的数据安全底线用法: **只有叙述者断言才能触发实体归并**
+ *    (docs/verb-layer.md §5.3)。人物层说"那人是艾拉"若被当作归并处理, 会**不可逆地
+ *    把两个实体并成一个** —— 这正是"撒谎/认错人"这类剧情的常见来源。
+ *    故归属命题 (source_type='attributed') 解析人物时一律传 false: 只查不并, 找不到就新建,
+ *    绝不把新别名挂到既有实体上。
+ */
+export function findOrCreatePerson(db, { name, aliases = [], personType = 'npc', mergeAliases = true }) {
   if (!name || !name.trim()) throw new Error('人名不能为空');
   name = name.trim();
   const existing = findPersonByNameOrAlias(db, name);
   if (existing) {
+    if (!mergeAliases) return { ...existing, existed: true };
     // 归并新别名
-    const merged = mergeAliases(existing, aliases);
+    const merged = mergeAliasList(existing, aliases);
     if (merged !== existing.aliases) {
       db.prepare('UPDATE people SET aliases = ?, updated_at = ? WHERE id = ?').run(merged, now(), existing.id);
     }
@@ -83,7 +94,7 @@ export function findOrCreateOrg(db, { name, aliases = [], description = '' }) {
   name = name.trim();
   const existing = findOrgByNameOrAlias(db, name);
   if (existing) {
-    const merged = mergeAliases(existing, aliases);
+    const merged = mergeAliasList(existing, aliases);
     if (merged !== existing.aliases) {
       db.prepare('UPDATE orgs SET aliases = ?, updated_at = ? WHERE id = ?').run(merged, now(), existing.id);
     }
@@ -126,20 +137,40 @@ export function createEvent(db, {
   title, process = '', causeText = '', resultText = '',
   timeId = null, locationId = null, chatId, memoryId = null,
   sourceMessageIds = [], importance = 0.5, emotionalWeight = 0,
+  // ---- V6: 动词槽与命题三轴 ----
+  verbType = '', verbSurface = '',
+  polarity = VERB_LAYER.defaults.polarity,
+  sourceType = VERB_LAYER.defaults.sourceType,
+  sourcePersonId = null,
+  attitude = null,
+  tense = VERB_LAYER.defaults.tense,
+  status = VERB_LAYER.defaults.status,
+  alignedInstanceId = null,
+  parentInstanceId = null,
+  parentRole = null,
 }) {
   const ts = now();
   const info = db.prepare(`
     INSERT INTO events (title, process, cause_text, result_text,
       time_id, location_id, chat_id, memory_id, source_message_ids,
-      importance, emotional_weight, created_at, updated_at)
+      importance, emotional_weight,
+      verb_type, verb_surface, polarity, source_type, source_person_id, attitude,
+      tense, status, aligned_instance_id, parent_instance_id, parent_role,
+      created_at, updated_at)
     VALUES (@title, @process, @causeText, @resultText,
       @timeId, @locationId, @chatId, @memoryId, @sourceMessageIds,
-      @importance, @emotionalWeight, @ts, @ts)
+      @importance, @emotionalWeight,
+      @verbType, @verbSurface, @polarity, @sourceType, @sourcePersonId, @attitude,
+      @tense, @status, @alignedInstanceId, @parentInstanceId, @parentRole,
+      @ts, @ts)
   `).run({
     title, process, causeText, resultText,
     timeId, locationId, chatId, memoryId,
     sourceMessageIds: JSON.stringify(sourceMessageIds),
-    importance: clamp01(importance), emotionalWeight: clamp01(emotionalWeight, 0), ts,
+    importance: clamp01(importance), emotionalWeight: clamp01(emotionalWeight, 0),
+    verbType, verbSurface, polarity, sourceType, sourcePersonId, attitude,
+    tense, status, alignedInstanceId, parentInstanceId, parentRole,
+    ts,
   });
   return Number(info.lastInsertRowid);
 }

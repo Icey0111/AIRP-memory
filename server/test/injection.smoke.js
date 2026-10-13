@@ -12,9 +12,9 @@ import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 import { migrate, getSchemaVersion } from '../src/db/migrate.js';
 import { upsertProfileEntry } from '../src/services/profileService.js';
-import { findOrCreatePerson, findOrCreateOrg, findOrCreateLocation } from '../src/services/entityService.js';
+import { findOrCreatePerson, findOrCreateOrg, findOrCreateLocation, findOrCreateTimePoint, createEvent, addEventParticipant } from '../src/services/entityService.js';
 import { addStance, currentStances, chatStances, stanceOverview, softDeleteStance } from '../src/services/stanceService.js';
-import { buildProfileTable, buildStanceTable, intensityLabel, stanceDisplayText } from '../src/services/injectionService.js';
+import { buildProfileTable, buildStanceTable, buildTimelineTable, buildPendingSection, eventText, createInjectionContext, intensityLabel, stanceDisplayText } from '../src/services/injectionService.js';
 import { assembleContext } from '../src/services/retrievalService.js';
 import { createMemory } from '../src/services/memoryService.js';
 import { INJECTION_TABLES } from '../src/domain/constants.js';
@@ -255,6 +255,70 @@ check('被软删的立场不进注入 (生效口径)',
     return removed && before.text.includes('疏离') && !after.text.includes('疏离')
       && after.count === before.count - 1;
   })());
+
+// ===============================================================
+console.log('\n--- V6: 时间线内联归属声称 (带来源口吻) + 【待兑现】段 ---');
+const day = findOrCreateTimePoint(db, { chatId: CHAT, label: '第九夜', seq: 9 });
+const hero2 = findOrCreatePerson(db, { name: '信使' });
+
+// (a) 一条"已被拆穿的声称": 以来源口吻出现在时间线上, 带定局标记
+const claim = createEvent(db, {
+  title: '信使的说辞', chatId: CHAT, verbType: '说', verbSurface: '声称',
+  sourceType: 'attributed', attitude: '说', sourcePersonId: hero2.id,
+  status: 'refuted', tense: 'past', timeId: day.id, importance: 0.8,
+});
+addEventParticipant(db, { eventId: claim, personId: hero2.id, role: '发起者' });
+createEvent(db, {
+  title: '卷宗已送往王都', chatId: CHAT, verbType: '送',
+  parentInstanceId: claim, parentRole: 'comp', sourceType: 'attributed',
+  status: 'refuted', tense: 'past', importance: 0.5,
+});
+
+// (b) 一条未决承诺: 进【待兑现】, 不进时间线
+const promise = createEvent(db, {
+  title: '答应带路', chatId: CHAT, verbType: '承诺', verbSurface: '答应',
+  sourceType: 'attributed', attitude: '说', sourcePersonId: hero2.id,
+  status: 'pending', tense: 'future', timeId: day.id, importance: 0.7,
+});
+addEventParticipant(db, { eventId: promise, personId: hero2.id, role: '发起者' });
+createEvent(db, {
+  title: '带主角去北门', chatId: CHAT, verbType: '去',
+  parentInstanceId: promise, parentRole: 'comp', sourceType: 'attributed',
+  status: 'pending', tense: 'future', importance: 0.5,
+});
+
+const tl = buildTimelineTable(db, { chatId: CHAT, ctx: createInjectionContext() });
+check('时间线收已拆穿的声称, 并以来源口吻 + 定局标记渲染',
+  tl.text.includes('信使说：卷宗已送往王都（已被拆穿）'), tl.text);
+check('未决承诺不进时间线', !tl.text.includes('答应带路') && !tl.text.includes('带主角去北门'));
+
+const pend = buildPendingSection(db, { chatId: CHAT });
+const P = T.pendingSection;
+check('【待兑现】段出现且标题与常量同源', pend.text.startsWith(P.header), pend.text);
+check('未决行带持有者与从句内容', pend.text.includes('信使说：带主角去北门'), pend.text);
+check('未决行标注未决与时间锚', pend.text.includes('（未决') && pend.text.includes('第九夜'), pend.text);
+
+const ctxWithPending = await assembleContext(db, null, { query: '信使', chatId: CHAT, characterId: '艾拉' });
+check('assembleContext 注入【待兑现】段并上报统计',
+  ctxWithPending.text.includes(P.header) && ctxWithPending.pendingCount >= 1
+  && ctxWithPending.pendingTokens > 0,
+  JSON.stringify({ c: ctxWithPending.pendingCount, t: ctxWithPending.pendingTokens }));
+check('段落顺序: 时间线 → 待兑现 → 检索段',
+  ctxWithPending.text.indexOf(T.headers.timeline) < ctxWithPending.text.indexOf(P.header)
+  && (ctxWithPending.text.indexOf(T.headers.memories) === -1
+    || ctxWithPending.text.indexOf(P.header) < ctxWithPending.text.indexOf(T.headers.memories)),
+  ctxWithPending.text.slice(0, 40));
+check('待兑现不吃检索预算 (usedTokens 只算记忆与细节)',
+  ctxWithPending.usedTokens === (await assembleContext(db, null, { query: '信使', chatId: CHAT })).usedTokens);
+check('无未决项的聊天不出【待兑现】段 (空段不出段)',
+  buildPendingSection(db, { chatId: 'chat-空' }).text === '');
+
+// 来源口吻的口径: 情态缺失时用兜底话术, 叙述者事实不套口吻
+check('叙述者事实不套"某人说"的口吻',
+  eventText({ title: '抵达北门', isProposition: false, resultText: '城门开了' }) === '抵达北门 〔城门开了〕');
+check('归属声称无情态时用兜底口吻',
+  eventText({ title: 'x', isProposition: true, holderName: '信使', attitude: null, comp: { title: '去北门' }, status: 'pending' })
+    .startsWith('信使声称：去北门'), '');
 
 // ===============================================================
 console.log('');

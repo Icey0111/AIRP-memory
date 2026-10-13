@@ -16,8 +16,8 @@ CREATE TABLE IF NOT EXISTS meta (
     value TEXT NOT NULL
 );
 
-INSERT INTO meta (key, value) VALUES ('schema_version', '5')
-ON CONFLICT (key) DO UPDATE SET value = '5';
+INSERT INTO meta (key, value) VALUES ('schema_version', '6')
+ON CONFLICT (key) DO UPDATE SET value = '6';
 
 -- ------------------------------------------------------------
 -- memories: 核心记忆表
@@ -262,6 +262,28 @@ CREATE TABLE IF NOT EXISTS events (
     time_id           INTEGER REFERENCES time_points (id) ON DELETE SET NULL,
     location_id       INTEGER REFERENCES locations (id) ON DELETE SET NULL,
 
+    -- ---- V6: 动词槽 (述谓实例的原语, docs/verb-layer.md) ----
+    -- 归一用 verb_type (受控词表建议值), 原文永不丢用 verb_surface
+    verb_type         TEXT NOT NULL DEFAULT '',
+    verb_surface      TEXT NOT NULL DEFAULT '',
+
+    -- ---- V6: 命题三轴 + 极性 + 嵌套 + 对齐指针 ----
+    -- 极性: 参与对齐 (命题 ¬P 匹配到事实 P => 「被推翻」, 不是「兑现」)
+    polarity          TEXT NOT NULL DEFAULT '+' CHECK (polarity IN ('+', '-')),
+    -- 轴②担保来源: 叙述者断言(事实层) / 归属给某人(命题层); 默认 narrator 使旧数据零漂移
+    source_type       TEXT NOT NULL DEFAULT 'narrator'
+                      CHECK (source_type IN ('narrator', 'attributed')),
+    source_person_id  INTEGER REFERENCES people (id) ON DELETE SET NULL,
+    attitude          TEXT,                        -- 说/认为/相信/希望/怀疑/假装/不知
+    -- 轴①时态定位: 只决定"到没到点", 与来源正交
+    tense             TEXT NOT NULL DEFAULT 'past' CHECK (tense IN ('past', 'now', 'future')),
+    -- 轴③对齐状态: asserted|pending|realized|failed|inactive|refuted|voided
+    status            TEXT NOT NULL DEFAULT 'asserted',
+    aligned_instance_id INTEGER REFERENCES events (id) ON DELETE SET NULL,
+    -- 嵌套引述: comp(命题宾语) / cond(条件前件) / alt(择一候选), 深度上限 2 (应用层)
+    parent_instance_id  INTEGER REFERENCES events (id) ON DELETE CASCADE,
+    parent_role       TEXT,
+
     -- 作用域: 事件总是发生在某条聊天/分支里
     chat_id           TEXT NOT NULL,
 
@@ -284,6 +306,12 @@ CREATE INDEX IF NOT EXISTS idx_events_chat       ON events (chat_id, is_active);
 CREATE INDEX IF NOT EXISTS idx_events_time       ON events (time_id);
 CREATE INDEX IF NOT EXISTS idx_events_location   ON events (location_id);
 CREATE INDEX IF NOT EXISTS idx_events_importance ON events (importance DESC);
+-- V6: 动词层 / 命题层的查询路径
+CREATE INDEX IF NOT EXISTS idx_events_verb    ON events (verb_type);
+CREATE INDEX IF NOT EXISTS idx_events_status  ON events (status, chat_id);
+CREATE INDEX IF NOT EXISTS idx_events_source  ON events (source_type);
+CREATE INDEX IF NOT EXISTS idx_events_parent  ON events (parent_instance_id);
+CREATE INDEX IF NOT EXISTS idx_events_aligned ON events (aligned_instance_id);
 
 -- ------------------------------------------------------------
 -- event_participants: 事件-人物参与关系 (多对多, 带角色)
@@ -310,7 +338,8 @@ CREATE TABLE IF NOT EXISTS event_links (
     from_id    INTEGER NOT NULL REFERENCES events (id) ON DELETE CASCADE,
     to_id      INTEGER NOT NULL REFERENCES events (id) ON DELETE CASCADE,
     relation   TEXT NOT NULL
-               CHECK (relation IN ('caused', 'led_to', 'preceded', 'contradicts')),
+               CHECK (relation IN ('caused', 'led_to', 'preceded', 'contradicts',
+                                   'conditional', 'alternative')),
     created_at INTEGER NOT NULL,
     PRIMARY KEY (from_id, to_id, relation),
     CHECK (from_id <> to_id)
@@ -480,3 +509,43 @@ CREATE INDEX IF NOT EXISTS idx_stances_target
     ON stances (target_type, target_id);
 CREATE INDEX IF NOT EXISTS idx_stances_valid
     ON stances (valid_to_event_id);
+
+-- ============================================================
+-- V6: 取值元素层 + 视图隔离 (docs/verb-layer.md §16)
+-- ============================================================
+
+-- ------------------------------------------------------------
+-- value_nodes: 取值元素层
+--
+-- 理由: 指针只能指向网中已存在的元素。若取值只是自由字符串, "信任/信赖/信服"
+--       就是三个不同文本 —— 指向不同文本 = 没指向同一个元素, 指针语义失效。
+--       故取值与实体走同一套 find-or-create + 别名归并。
+--
+-- kind: 取值域 (stance_type / aspect / ...) —— 同名可在不同域中各建一个节点
+-- parent_id: 可选层级 (如 信任 → 态度), 参照 locations.parent_id 的先例
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS value_nodes (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT NOT NULL,
+    aliases    TEXT NOT NULL DEFAULT '[]',      -- JSON 数组, 与 people / locations 同口径
+    kind       TEXT NOT NULL DEFAULT '',
+    parent_id  INTEGER REFERENCES value_nodes (id) ON DELETE SET NULL,
+    is_active  INTEGER NOT NULL DEFAULT 1,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_value_nodes_name ON value_nodes (name, kind);
+CREATE INDEX IF NOT EXISTS idx_value_nodes_parent ON value_nodes (parent_id);
+
+-- ------------------------------------------------------------
+-- 视图隔离: 事实层与命题层共用 events 表, 由视图分路
+--   事实层代码一律读 v_facts —— 归属命题泄漏进事实层即测试挂
+-- ------------------------------------------------------------
+CREATE VIEW IF NOT EXISTS v_facts AS
+    SELECT * FROM events
+    WHERE is_active = 1 AND source_type = 'narrator';
+
+CREATE VIEW IF NOT EXISTS v_propositions AS
+    SELECT * FROM events
+    WHERE is_active = 1 AND source_type <> 'narrator';

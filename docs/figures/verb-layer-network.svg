@@ -1,0 +1,64 @@
+<svg viewBox="0 0 680 422" width="100%" role="img" xmlns="http://www.w3.org/2000/svg">
+  <title>语言学顺序编织的记忆网络，时间位于第一位</title>
+  <desc>横向是语言学语序时间地点施事动词受事，每条线程是一个述谓实例，纵向虚线是共享节点形成的编织</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+
+  <text x="40" y="50" font-size="14" font-weight="500" fill="#2C2C2A" font-family="sans-serif">语言学顺序编织的记忆网络：时间永远位于第一位</text>
+  <text x="40" y="70" font-size="12" fill="#5F5E5A" font-family="sans-serif">横向 = 语序（时间 → 地点 → 施事 → 动词 → 受事）　每条线程 = 一个述谓实例　纵向虚线 = 共享节点</text>
+
+  <text x="90" y="98" text-anchor="middle" font-size="12" font-weight="500" fill="#185FA5" font-family="sans-serif">时间</text>
+  <text x="198" y="98" text-anchor="middle" font-size="12" fill="#5F5E5A" font-family="sans-serif">地点</text>
+  <text x="306" y="98" text-anchor="middle" font-size="12" fill="#5F5E5A" font-family="sans-serif">施事</text>
+  <text x="408" y="98" text-anchor="middle" font-size="12" fill="#5F5E5A" font-family="sans-serif">动词</text>
+  <text x="532" y="98" text-anchor="middle" font-size="12" fill="#5F5E5A" font-family="sans-serif">受事 / 与事</text>
+
+  <path d="M40 151 L596 151" stroke="#85B7EB" stroke-width="1" fill="none" marker-end="url(#arrow)"/>
+  <rect x="40" y="136" width="100" height="30" rx="8" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+  <text x="90" y="151" text-anchor="middle" font-size="12" font-weight="500" fill="#0C447C" font-family="sans-serif" dominant-baseline="central">第三夜 #7</text>
+  <rect x="148" y="136" width="100" height="30" rx="8" fill="#FFFFFF" stroke="#B4B2A9" stroke-width="0.5"/>
+  <text x="198" y="151" text-anchor="middle" font-size="12" fill="#2C2C2A" font-family="sans-serif" dominant-baseline="central">夜莺酒馆</text>
+  <rect x="256" y="136" width="100" height="30" rx="8" fill="#FFFFFF" stroke="#B4B2A9" stroke-width="0.5"/>
+  <text x="306" y="151" text-anchor="middle" font-size="12" fill="#2C2C2A" font-family="sans-serif" dominant-baseline="central">艾拉</text>
+  <rect x="364" y="136" width="88" height="30" rx="8" fill="#FAEEDA" stroke="#BA7517" stroke-width="0.5"/>
+  <text x="408" y="151" text-anchor="middle" font-size="12" font-weight="500" fill="#633806" font-family="sans-serif" dominant-baseline="central">〔说〕</text>
+  <rect x="464" y="136" width="136" height="30" rx="8" fill="#FFFFFF" stroke="#B4B2A9" stroke-width="0.5"/>
+  <text x="532" y="151" text-anchor="middle" font-size="12" fill="#2C2C2A" font-family="sans-serif" dominant-baseline="central">主角</text>
+
+  <path d="M40 221 L596 221" stroke="#85B7EB" stroke-width="1" fill="none" marker-end="url(#arrow)"/>
+  <rect x="40" y="206" width="100" height="30" rx="8" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+  <text x="90" y="221" text-anchor="middle" font-size="12" font-weight="500" fill="#0C447C" font-family="sans-serif" dominant-baseline="central">第四日 #8</text>
+  <rect x="148" y="206" width="100" height="30" rx="8" fill="#FFFFFF" stroke="#B4B2A9" stroke-width="0.5"/>
+  <text x="198" y="221" text-anchor="middle" font-size="12" fill="#2C2C2A" font-family="sans-serif" dominant-baseline="central">夜莺酒馆</text>
+  <rect x="256" y="206" width="100" height="30" rx="8" fill="#FFFFFF" stroke="#B4B2A9" stroke-width="0.5"/>
+  <text x="306" y="221" text-anchor="middle" font-size="12" fill="#2C2C2A" font-family="sans-serif" dominant-baseline="central">艾拉</text>
+  <rect x="364" y="206" width="88" height="30" rx="8" fill="#FAEEDA" stroke="#BA7517" stroke-width="0.5"/>
+  <text x="408" y="221" text-anchor="middle" font-size="12" font-weight="500" fill="#633806" font-family="sans-serif" dominant-baseline="central">〔递出〕</text>
+  <rect x="464" y="206" width="136" height="30" rx="8" fill="#FFFFFF" stroke="#B4B2A9" stroke-width="0.5"/>
+  <text x="532" y="221" text-anchor="middle" font-size="12" fill="#2C2C2A" font-family="sans-serif" dominant-baseline="central">卷宗</text>
+
+  <path d="M40 301 L596 301" stroke="#85B7EB" stroke-width="1" fill="none" marker-end="url(#arrow)"/>
+  <rect x="40" y="286" width="100" height="30" rx="8" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+  <text x="90" y="301" text-anchor="middle" font-size="12" font-weight="500" fill="#0C447C" font-family="sans-serif" dominant-baseline="central">第五日 #9</text>
+  <rect x="148" y="286" width="100" height="30" rx="8" fill="#FFFFFF" stroke="#B4B2A9" stroke-width="0.5" stroke-dasharray="3 3"/>
+  <text x="198" y="301" text-anchor="middle" font-size="12" fill="#888780" font-family="sans-serif" dominant-baseline="central">—</text>
+  <rect x="256" y="286" width="100" height="30" rx="8" fill="#FFFFFF" stroke="#B4B2A9" stroke-width="0.5"/>
+  <text x="306" y="301" text-anchor="middle" font-size="12" fill="#2C2C2A" font-family="sans-serif" dominant-baseline="central">主角</text>
+  <rect x="364" y="286" width="88" height="30" rx="8" fill="#FAEEDA" stroke="#BA7517" stroke-width="0.5"/>
+  <text x="408" y="301" text-anchor="middle" font-size="12" font-weight="500" fill="#633806" font-family="sans-serif" dominant-baseline="central">〔交还〕</text>
+  <rect x="464" y="286" width="136" height="30" rx="8" fill="#FFFFFF" stroke="#B4B2A9" stroke-width="0.5"/>
+  <text x="532" y="301" text-anchor="middle" font-size="12" fill="#2C2C2A" font-family="sans-serif" dominant-baseline="central">卷宗</text>
+
+  <path d="M198 167 L198 205" stroke="#888780" stroke-width="0.5" stroke-dasharray="3 3" fill="none"/>
+  <path d="M306 167 L306 205" stroke="#888780" stroke-width="0.5" stroke-dasharray="3 3" fill="none"/>
+  <path d="M532 237 L532 285" stroke="#888780" stroke-width="0.5" stroke-dasharray="3 3" fill="none"/>
+  <text x="540" y="264" font-size="11" fill="#5F5E5A" font-family="sans-serif">同一物件被两条线程穿过</text>
+  <text x="316" y="190" font-size="11" fill="#5F5E5A" font-family="sans-serif">共享</text>
+
+  <rect x="40" y="336" width="600" height="66" rx="16" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.5"/>
+  <text x="56" y="358" font-size="12" fill="#2C2C2A" font-family="sans-serif">编织 = 共享节点：同一个人 / 地点 / 物件被多条线程穿过 —— 网络就是这样逐渐长出来的</text>
+  <text x="56" y="380" font-size="12" fill="#5F5E5A" font-family="sans-serif">派生视图（不是新节点）：事件 = 簇 ｜ 摘要 = 路径压缩 ｜ 待兑现 = 未决命题 ｜ 通路编号 = 坐标</text>
+</svg>

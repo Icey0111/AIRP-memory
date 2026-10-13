@@ -8,7 +8,7 @@ import {
 import { getProfile } from './profileService.js';
 import {
   createInjectionContext, buildProfileTable, buildStanceTable,
-  buildEntityTable, buildTimelineTable, buildRetrievedTable,
+  buildEntityTable, buildTimelineTable, buildRetrievedTable, buildPendingSection,
 } from './injectionService.js';
 import { resolveEntityName } from './stanceService.js';
 import { chatTimeline } from './graphService.js';
@@ -234,7 +234,9 @@ export async function assembleContext(db, embed, {
   if (digest.text) sections.push(digest.text);
 
   // 5) 事件时间线 (常驻限量, 独立预算) —— 以时间节点为锚的事件邻接视图 (§3.4)
+  //    归属声称以来源口吻内联在这里 (已定局的: 已证实 / 已被拆穿); 未决的走 6) 【待兑现】
   let timelineCount = 0; let timelineTotal = 0; let timelineTokens = 0; let timelineDropped = 0;
+  let propositionRows = 0;
   if (tablesOn && chatId) {
     try {
       const t = buildTimelineTable(db, { chatId, ctx, sketches: entitySketches, events: windowEvents });
@@ -242,12 +244,26 @@ export async function assembleContext(db, embed, {
       timelineTotal = t.total;
       timelineTokens = t.tokens;
       timelineDropped = t.dropped;
+      propositionRows = (t.events ?? []).slice(0, t.count).filter((e) => e.isProposition).length;
       if (t.text) sections.push(t.text);
     } catch (err) {
       console.warn(`[injection] 事件时间线渲染失败, 该段跳过: ${err.message}`);
       fellBack = true;
     }
   }
+
+  // 6) 【待兑现】(常驻限量, 独立预算) —— 未决命题: 承诺/约定/威胁/悬而未决的线索。
+  //    这批信息原先只存在于摘要的自由文本里 (无法核对/标记/统计); 结构化后单独成段,
+  //    与时间线不重叠 —— 未决的只看前景, 已定局的才进时间线。
+  let pendingCount = 0; let pendingTotal = 0; let pendingTokens = 0; let pendingDropped = 0;
+  const pending = chatId
+    ? buildPendingSection(db, { chatId })
+    : { text: '', count: 0, total: 0, tokens: 0, dropped: 0 };
+  pendingCount = pending.count;
+  pendingTotal = pending.total;
+  pendingTokens = pending.tokens;
+  pendingDropped = pending.dropped;
+  if (pending.text) sections.push(pending.text);
 
   // 6) FTS 召回的相关记忆 (排除摘要: 摘要已由【前情提要】常驻, 再参与召回只会重复占位)
   const { hits } = query
@@ -365,6 +381,13 @@ export async function assembleContext(db, embed, {
     timelineTotal,
     timelineTokens,
     timelineDropped,
+    /** 时间线里带来源口吻的归属声称行数 (已定局: 已证实 / 已被拆穿) */
+    propositionRows,
+    // 【待兑现】独立预算, 单独上报 (与时间线不重叠)
+    pendingCount,
+    pendingTotal,
+    pendingTokens,
+    pendingDropped,
     tablesEnabled: tablesOn,
     stancesEnabled: stancesOn,
     // tables: 全部表格化 | bullets: 全回退 | mixed: 部分段回退

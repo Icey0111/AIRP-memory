@@ -13,7 +13,7 @@ import {
   ASPECT_SUGGESTIONS, STANCE_TYPE_SUGGESTIONS,
   CHUNK_DEFAULTS, STANCE_DEFAULTS,
   RETRIEVAL_SCORING, RETRIEVAL_FALLBACK_DEFAULTS, TOKEN_ESTIMATION, CONTEXT_SECTIONS, DIGEST_FORMAT,
-  INJECTION_TABLES,
+  INJECTION_TABLES, VERB_LAYER,
   THRESHOLDS, SUMMARY_POLICY, FORGET_SCORING, FORGET_TABLES,
   RULES, ENDPOINTS,
 } from '../domain/constants.js';
@@ -146,6 +146,9 @@ export function buildMeta(db, { llm = null, embed = null, retrieval = {}, runtim
     contextSections: CONTEXT_SECTIONS,
     // 注入表格化: 段落标题/行数上限/各段预算/立场显示规则 (前端只读不写死)
     injectionTables: INJECTION_TABLES,
+    // 动词层与命题层: 题元角色/动词建议值/三轴取值/嵌套角色/边词表/对齐口径
+    // (前端做下拉与展示用; 事实层与命题层的分路由服务端视图保证, 前端不判断)
+    verbLayer: VERB_LAYER,
     // 前情提要段的文本形状: 前端展示用 (不解析), 与后端组装同源
     digestFormat: DIGEST_FORMAT,
 

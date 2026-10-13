@@ -83,7 +83,7 @@ scope = 'chat'      AND chat_id 匹配       → 当前聊天可见
 
 ```json
 {
-  "ok": true, "schemaVersion": 5, "latestSupported": 5,
+  "ok": true, "schemaVersion": 6, "latestSupported": 6,
   "counts": { "memories": 12, "attribute_chunks": 34, "stances": 5, "...": 0 }
 }
 ```

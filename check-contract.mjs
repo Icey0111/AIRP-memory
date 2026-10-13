@@ -146,12 +146,12 @@ if (reachable) {
   console.log('\n--- 注入表格契约 ---');
   const it = m.injectionTables;
   check('injectionTables 已下发', it !== null && typeof it === 'object');
-  check('七段注入顺序 (profile,stances,entities,digest,timeline,memories,chunks)',
+  check('八段注入顺序 (profile,stances,entities,digest,timeline,pending,memories,chunks)',
     (m.contextSections ?? []).map((s) => s.key).join(',')
-      === 'profile,stances,entities,digest,timeline,memories,chunks',
+      === 'profile,stances,entities,digest,timeline,pending,memories,chunks',
     (m.contextSections ?? []).map((s) => s.key).join(','));
   check('表格段都有服务端下发的段落标题 (前端不硬编码)',
-    ['profile', 'stances', 'entities', 'timeline', 'memories', 'chunks']
+    ['profile', 'stances', 'entities', 'timeline', 'pending', 'memories', 'chunks']
       .every((k) => typeof it?.headers?.[k] === 'string' && it.headers[k].length > 0),
     JSON.stringify(Object.keys(it?.headers ?? {})));
   check('常驻段独立预算齐备',
