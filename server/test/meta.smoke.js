@@ -341,6 +341,7 @@ const SAMPLES = {
   'GET /api/config': [],
   'POST /api/config': [{ llm: { model: '' } }],
   'GET /api/config/models': [],
+  'POST /api/config/models': [{ kind: 'llm', baseUrl: '', apiKey: '' }],
   'POST /api/forget': [{}],
   'POST /api/forget/restore': [{ table: 'memories', id: 1 }],
   'POST /api/summarize': [{ chatId: 'chat001', text: 'ELARA: x' }],

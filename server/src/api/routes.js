@@ -144,6 +144,15 @@ export function createRouter(db, { clients = null, llm = null, embed = null, ret
     res.json({ ok: true, kind, models });
   }));
 
+  // 试探版: 用用户**正在输入、尚未保存**的 baseUrl/apiKey 拉列表 (不落盘),
+  // 让用户保存前就能看到模型下拉, 打错地址当场发现
+  router.post('/api/config/models', handleAsync(async (req, res) => {
+    if (!configApi) throw new Error('配置读写未启用');
+    const { kind = 'llm', baseUrl, apiKey } = req.body ?? {};
+    const models = await configApi.listModelsProvided({ kind, baseUrl, apiKey });
+    res.json({ ok: true, kind, models });
+  }));
+
   // ---------- 一阶记忆 ----------
   router.post('/api/memories', handle((req, res) => {
     res.json({ ok: true, memory: createMemory(db, req.body ?? {}) });

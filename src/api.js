@@ -94,6 +94,7 @@ export function createApi(getSettings) {
     getConfig: () => request('GET', '/api/config'),
     saveConfig: (payload, opts) => request('POST', '/api/config', { body: payload, ...opts }),
     listModels: (kind, opts) => request('GET', `/api/config/models?kind=${kind}`, { ...opts }),
+    probeModels: (payload, opts) => request('POST', '/api/config/models', { body: payload, ...opts }),
 
     context: (payload, opts) => request('POST', '/api/context', { body: payload, ...opts }),
     retrieve: (payload, opts) => request('POST', '/api/retrieve', { body: payload, ...opts }),

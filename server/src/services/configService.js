@@ -129,13 +129,13 @@ export function createConfigApi({ filePath, defaults, rebuild }) {
    * 必须由服务端代理: apiKey 只在服务端, 前端永远不碰明文密钥。
    * kind ∈ llm | embedding; 返回模型 id 字符串数组。
    */
-  async function listModels(kind) {
-    if (kind !== 'llm' && kind !== 'embedding') throw new Error('kind 必须是 llm 或 embedding');
-    const sec = merged()[kind] ?? {};
-    if (!sec.baseUrl) throw new Error(`${kind}.baseUrl 未配置 —— 先保存接口地址`);
-    if (!sec.apiKey) throw new Error(`${kind}.apiKey 未配置 —— 先保存密钥`);
-    // 兜底尝试两条路径: baseUrl 带不带 /v1 都试 (中转两种约定都有)。
-    // 都失败时把最后一个错误抛出 —— 若 DNS 都解析不到, 错误里会如实说, 用户能看出地址本身无效。
+  /**
+   * 模型列表核心: 用**给定**的 baseUrl/apiKey 探测供应商 GET /models。
+   * 兜底尝试带/不带 /v1 两条路径; 失败抛出含具体 URL 的错误。
+   */
+  async function listModelsFor(kind, sec) {
+    if (!sec.baseUrl) throw new Error('baseUrl 未填写');
+    if (!sec.apiKey) throw new Error('apiKey 未填写');
     const base = String(sec.baseUrl).replace(/\/+$/, '');
     const candidates = base.endsWith('/v1')
       ? [`${base}/models`]
@@ -163,5 +163,19 @@ export function createConfigApi({ filePath, defaults, rebuild }) {
     throw new Error(`拉取模型列表失败: ${lastErr?.message ?? '未知错误'}`);
   }
 
-  return { view, update, describe, listModels };
+  async function listModels(kind) {
+    if (kind !== 'llm' && kind !== 'embedding') throw new Error('kind 必须是 llm 或 embedding');
+    return listModelsFor(kind, merged()[kind] ?? {});
+  }
+
+  /**
+   * 用**用户正在输入、尚未保存**的 baseUrl/apiKey 试探拉取模型列表 (不落盘)。
+   * 让用户在保存前就能看到模型下拉 —— 打错地址当场就能发现。
+   */
+  async function listModelsProvided({ kind, baseUrl, apiKey }) {
+    if (kind !== 'llm' && kind !== 'embedding') throw new Error('kind 必须是 llm 或 embedding');
+    return listModelsFor(kind, { baseUrl, apiKey });
+  }
+
+  return { view, update, describe, listModels, listModelsProvided };
 }

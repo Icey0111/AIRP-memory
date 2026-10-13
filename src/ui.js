@@ -843,8 +843,8 @@ export function mountPanel({ api, metaStore, injector, extractor, summarizer, lo
         getSettings().pendingModelConfig = payload;
         saveSettings();
         renderConfigForm();
-        setCfgStatus('已暂存 —— 记忆服务上线后会自动应用这份配置并使其生效, 无需再操作');
-        toast('success', '模型配置已暂存, 服务上线后自动生效');
+        setCfgStatus('⚠️ 服务未运行 —— 配置只暂存在本机, 还没有生效! 双击 E:////记忆系统////start-server.bat 启动服务, 上线后会自动应用');
+        toast('warning', '服务未运行: 配置已暂存本机, 启动服务后才会生效');
         return;
       }
       const r = await api.saveConfig(payload);
