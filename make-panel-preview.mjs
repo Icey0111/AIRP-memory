@@ -124,7 +124,7 @@ ${html}
     'retrieval.topK': 8,
     'retrieval.tokenBudget': 1200,
     'summary.digestMaxTokens': 2000,
-    'summary.triggerTokens': 6000
+    'summary.triggerFloors': 10
   };
   Array.prototype.forEach.call(document.querySelectorAll('[data-tm-default]'), function (el) {
     var v = defaultHints[el.getAttribute('data-tm-default')];
@@ -180,16 +180,16 @@ ${html}
   $('tm_status').textContent = '最近一次注入：检索段 412 / 1200 token · 3 条记忆 + 2 条细节 · 前情提要 4 条 · 33ms';
 
   $('tm_summary_policy').innerHTML =
-    '<div class="tm-mono">阈值 6000 · 下限 1500 · 单批上限 12000 token · 摘要上限 800 字</div>'
-    + '<div class="tm-muted">量纲：估算 token ≈ ⌈字符数 / 2⌉</div>'
-    + '<div class="tm-muted">按本系统的估算口径, 典型中文角色扮演单条约 150-300 token, 一轮往返约 300-600 token; '
-    + '6000 token 大致是 20 条消息 / 10 轮往返, 接近"一小场戏"的粒度。</div>'
-    + '<div class="tm-muted">按上下文选择：8192 → 3000（固定开销占比大）；16384 → 6000（默认量级）；32768 → 10000；131072 → 12000</div>';
+    '<div class="tm-mono">触发 10 层 · 保留 6 层不隐藏 · 单批安全阀 12000 token · 摘要上限 800 字</div>'
+    + '<div class="tm-muted">触发量纲：楼层数（聊天记录条数，用户与角色各占一层）。估算 token ≈ ⌈字符数 / 2⌉</div>'
+    + '<div class="tm-muted">按楼层计数而不是按估算 token: 每个人的单条输出长度差异极大, 固定 token 阈值等于把'
+    + '"什么时候总结"交给了用户的语速。楼层数是用户能直接看到的量, 默认 10 层大致是"一小场戏"的粒度。</div>'
+    + '<div class="tm-muted">按对话节奏选择：5 层（快节奏短句对话）；10 层（默认量级）；20 层（慢节奏长文）；40 层（不建议再大）</div>';
   $('tm_summary_state').innerHTML =
-    '待总结 <b>4120</b> / 6000 token · 12 条（楼层 24–35）· 已总结至 23 · 已隐藏 6 条';
+    '待总结 <b>4</b> / 10 层（楼层 24–35 · 约 4120 token）· 已总结至 23 · 已隐藏 6 层';
   $('tm_summary_result').innerHTML =
-    '<div>楼层 12–23（12 条 · 约 6180 token） → 摘要记忆 #41</div>'
-    + '<div class="tm-muted">已隐藏 6 条（酒馆命令，楼层 12–17）</div>';
+    '<div>楼层 12–23（12 层 · 约 6180 token） → 摘要记忆 #41</div>'
+    + '<div class="tm-muted">已隐藏 6 层（酒馆命令，楼层 12–17）</div>';
   $('tm_preview_result').innerHTML =
     '<div class="tm-muted">query: 艾拉为什么会离开北境的哨塔</div>'
     + '<div>检索段 412/1200 token · 画像 2 · 记忆 3 · 细节 2 · 前情提要 4 条</div>'
@@ -211,7 +211,7 @@ ${html}
   $('tm_tag_connection').textContent = '已连接 v0.1.0';
   $('tm_tag_inject').textContent = '开';
   $('tm_tag_write').textContent = '关';
-  $('tm_tag_summary').textContent = '4120/6000 token · 隐藏 6 条';
+  $('tm_tag_summary').textContent = '4/10 层 · 隐藏 6 层';
   $('tm_tag_diagnostics').textContent = '17/18 端点可用';
 
   // ---------- 折叠交互 (与 ui.js 同语义, 但预览不落盘) ----------

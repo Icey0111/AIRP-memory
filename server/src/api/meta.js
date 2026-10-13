@@ -93,8 +93,7 @@ export function buildMeta(db, { llm = null, embed = null, retrieval = {}, runtim
       stance: STANCE_DEFAULTS,
       forget: FORGET_SCORING.defaults,
       summary: {
-        triggerTokens: SUMMARY_POLICY.triggerTokens,
-        minTokens: SUMMARY_POLICY.minTokens,
+        triggerFloors: SUMMARY_POLICY.triggerFloors,
         maxBatchTokens: SUMMARY_POLICY.maxBatchTokens,
         maxSummaryChars: SUMMARY_POLICY.maxSummaryChars,
         keepRecentMessages: SUMMARY_POLICY.keepRecentMessages,
@@ -147,7 +146,7 @@ export function buildMeta(db, { llm = null, embed = null, retrieval = {}, runtim
     // 前情提要段的文本形状: 前端展示用 (不解析), 与后端组装同源
     digestFormat: DIGEST_FORMAT,
 
-    // ---------- 长对话压缩策略: 前端据此累计 token 并决定何时总结 ----------
+    // ---------- 长对话压缩策略: 前端据此累计楼层并决定何时总结 ----------
     // 阈值属于跨端语义, 前端不另存一份; 设置里同名字段为 0/-1 时即"用这里的值"
     summaryPolicy: SUMMARY_POLICY,
 

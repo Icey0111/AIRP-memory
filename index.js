@@ -59,7 +59,7 @@ jQuery(async () => {
   // 每轮生成前注入记忆 (契约未载入时自动跳过, 不做任何猜测)
   injector.bind();
 
-  // 每收到一条角色消息: 写入侧计数 + 总结侧检查累计 token 是否达阈值
+  // 每收到一条角色消息: 写入侧计数 + 总结侧检查累计楼层是否达阈值
   eventSource.on(event_types.MESSAGE_RECEIVED, () => {
     extractor.noteMessage();
     summarizer.noteMessage();

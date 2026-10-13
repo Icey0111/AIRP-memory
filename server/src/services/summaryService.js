@@ -5,7 +5,7 @@
 //   摘要留下"叙事连续性" —— 关系怎么变的、做了什么决定、还有什么悬着没解决。
 // 所以摘要 prompt 明确要求不要罗列事件细节, 而保留会影响后续扮演的软信息。
 //
-// 触发时机由前端掌握 (累计估算 token 达阈值), 阈值本身来自 domain/constants.js,
+// 触发时机由前端掌握 (未总结区间的楼层数达阈值), 阈值本身来自 domain/constants.js,
 // 本服务只负责"给一段文本, 还一条摘要", 不关心何时被调用。
 import { createMemory, listMemories } from './memoryService.js';
 import { parseJsonLoose } from './extractionService.js';

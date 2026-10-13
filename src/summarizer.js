@@ -1,13 +1,21 @@
-// 长对话压缩闭环: 累计估算 token -> 达阈值 -> 压成摘要记忆 -> 隐藏已总结正文
+// 长对话压缩闭环: 累计楼层数 -> 达阈值 -> 压成摘要记忆 -> 隐藏已总结正文
 //
 // 硬性约定 (与后端 docs/api.md §12、/api/meta 对应):
-//   阈值、下限、单批上限、摘要长度上限、建议保留条数、token 系数, 全部取自 /api/meta。
+//   触发楼层数、单批安全阀、摘要长度上限、建议保留楼层数、token 系数, 全部取自 /api/meta。
 //   前端不写死任何一个数字; 契约未载入时整个功能不可用, 并如实说明原因。
 //
+// 为什么按楼层而不是 token 判断"该不该总结" (与后端 SUMMARY_POLICY 同源):
+//   单条输出的长短因人而异。按 token 累计等于把"什么时候会触发总结"交给了用户的语速 ——
+//   话密的人三五层就触发一次 (摘要碎成流水账), 话少的人几十层才触发一次 (摘要跨度大到跨场混淆),
+//   同一个默认值在不同人的聊天里表现完全不同, 用户也无从预期。
+//   楼层数是用户能直接看到的量 (聊天记录第几层), 粒度可控、可预期。
+//   maxBatchTokens 仍然保留, 但只做"单批送进 LLM 的输入安全阀" (楼层数与文本量不成正比),
+//   它不参与触发判断。
+//
 // 两个边界的区分 (这是本模块的核心状态模型):
-//   summarizedUpTo —— 已被总结覆盖到的楼层。用于"累计 token 从哪算起", 避免重复总结。
+//   summarizedUpTo —— 已被总结覆盖到的楼层。用于"累计从哪算起", 避免重复总结。
 //   hiddenUpTo     —— 已被隐藏到哪一层。这些楼层不进 prompt, 也自然不计入累计。
-//   两者的差额就是"已总结但仍保留在上下文里"的那几条 (为了让模型有逐字近因)。
+//   两者的差额就是"已总结但仍保留在上下文里"的那几层 (为了让模型有逐字近因)。
 //
 // 覆盖边界必须用"实际进入摘要的最后一个楼层"(batch.lastIncluded), 而不是区间末端:
 // 单批超出 maxBatchTokens 时只有前缀被摘要, 若把边界推进到区间末端,
@@ -32,12 +40,12 @@ export function createSummarizer({ api, metaStore, getSettings, log, bus }) {
     return metaStore.summaryPolicy();
   }
 
-  /** 有效触发阈值: 面板填 0 表示"用服务端建议值"; 一律钳制在服务端给定的区间内 */
-  function triggerTokens() {
+  /** 有效触发楼层数: 面板填 0 表示"用服务端建议值"; 一律钳制在服务端给定的区间内 */
+  function triggerFloors() {
     const p = policy();
     if (!p) return null;
-    const user = Number(getSettings()?.summaryTriggerTokens);
-    const base = Number.isFinite(user) && user > 0 ? user : Number(p.triggerTokens);
+    const user = Number(getSettings()?.summaryTriggerFloors);
+    const base = Number.isFinite(user) && user > 0 ? user : Number(p.triggerFloors);
     if (!Number.isFinite(base) || base <= 0) return null;
     const lo = Number(p.limits?.min);
     const hi = Number(p.limits?.max);
@@ -45,7 +53,7 @@ export function createSummarizer({ api, metaStore, getSettings, log, bus }) {
     return Number.isFinite(hi) && hi > 0 ? Math.min(lower, hi) : lower;
   }
 
-  /** 有效保留条数: 面板填 -1 表示"用服务端建议值"; 0 = 被总结的正文全部隐藏 */
+  /** 有效保留楼层数: 面板填 -1 表示"用服务端建议值"; 0 = 被总结的正文全部隐藏 */
   function keepRecent() {
     const p = policy();
     const user = Number(getSettings()?.summaryKeepRecentMessages);
@@ -65,7 +73,8 @@ export function createSummarizer({ api, metaStore, getSettings, log, bus }) {
 
   /**
    * 待总结区间统计。
-   * charCount 是区间内全部未隐藏正文的字符数 (不受 maxChars 影响), 用于阈值判断;
+   * floors 是区间内的**可见楼层数** (已隐藏与空楼层不计), 它就是触发判断的量纲;
+   * charCount / tokens 只是区间大小的参考值 (注入预算与单批安全阀用), 不参与触发。
    * text 是按 maxChars 截断后的提交文本; lastIncluded 是提交文本覆盖到的最后楼层。
    */
   function pending({ maxChars = 0 } = {}) {
@@ -74,11 +83,16 @@ export function createSummarizer({ api, metaStore, getSettings, log, bus }) {
     if (to < from) {
       return {
         from, to, text: '', sourceMessageIds: [],
-        messageCount: 0, charCount: 0, tokens: 0, lastIncluded: null,
+        messageCount: 0, floors: 0, charCount: 0, tokens: 0, lastIncluded: null,
       };
     }
     const range = collectRange({ fromIndex: from, toIndex: to, maxChars });
-    return { ...range, tokens: metaStore.estimateTokensByChars(range.charCount) ?? 0 };
+    return {
+      ...range,
+      // 楼层数就是"进入文本的可见消息条数": 已隐藏的楼层不算, 否则会反复触发总结
+      floors: range.messageCount,
+      tokens: metaStore.estimateTokensByChars(range.charCount) ?? 0,
+    };
   }
 
   /** 供 UI 展示的运行状态 (不含任何硬编码阈值) */
@@ -86,16 +100,17 @@ export function createSummarizer({ api, metaStore, getSettings, log, bus }) {
     const st = pending();
     return {
       available: metaStore.summaryPolicy() !== null,
-      triggerTokens: triggerTokens(),
-      tokens: st.tokens,
-      charCount: st.charCount,
-      pendingMessages: st.messageCount,
+      triggerFloors: triggerFloors(),
+      pendingFloors: st.floors,
       pendingFrom: st.from,
       lastMessageIndex: lastMessageIndex(),
       summarizedUpTo: summarizedUpTo(),
       hiddenUpTo: hiddenUpTo(),
       hiddenCount: hiddenUpTo() + 1,
       keepRecent: keepRecent(),
+      // 下面两项只是区间大小的参考值, 不参与触发判断
+      charCount: st.charCount,
+      tokens: st.tokens,
       running,
       lastReport,
     };
@@ -133,18 +148,19 @@ export function createSummarizer({ api, metaStore, getSettings, log, bus }) {
 
     normalizeState();
 
-    const threshold = triggerTokens();
+    const threshold = triggerFloors();
     const full = pending();
-    if (!full.messageCount) return { skipped: '没有可总结的正文', trigger };
+    if (!full.floors) return { skipped: '没有可总结的正文', trigger };
 
     if (trigger === 'auto') {
       if (!threshold) return { skipped: '服务端未下发可用阈值', trigger };
-      if (full.tokens < threshold) {
-        return { skipped: `累计约 ${full.tokens} token, 未达阈值 ${threshold}`, trigger };
+      if (full.floors < threshold) {
+        return { skipped: `待总结 ${full.floors} 层, 未达阈值 ${threshold} 层`, trigger };
       }
     }
 
-    // 单批上限: 超出 maxBatchTokens 的部分留到下一批, 保证喂给 LLM 的 prompt 不撑爆上下文
+    // 单批安全阀: 触发按楼层数, 但楼层数与文本量不成正比, 所以仍要有 token 上限兜底。
+    // 超出 maxBatchTokens 的部分留到下一批, 保证喂给 LLM 的 prompt 不撑爆上下文。
     const cpt = metaStore.charsPerToken();
     const batchChars = Number.isFinite(Number(p.maxBatchTokens)) && cpt
       ? Math.max(1, Math.trunc(p.maxBatchTokens * cpt))
@@ -170,7 +186,7 @@ export function createSummarizer({ api, metaStore, getSettings, log, bus }) {
       messageCount: batch.messageCount,
       inputChars: batch.charCount,
       inputTokens: batch.tokens,
-      threshold,
+      triggerFloors: threshold,
       keepRecent: keepRecent(),
       summaryMemoryId: null,
       deduped: false,
@@ -260,7 +276,7 @@ export function createSummarizer({ api, metaStore, getSettings, log, bus }) {
     resetState,
     status,
     pending,
-    triggerTokens,
+    triggerFloors,
     keepRecent,
     getLast: () => lastReport,
     isRunning: () => running,

@@ -40,7 +40,7 @@ const FIELDS = [
   { sel: '#tm_write_max_chars', key: 'writeMaxChars', type: 'int' },
 
   { sel: '#tm_summary_enabled', key: 'summaryEnabled', type: 'bool' },
-  { sel: '#tm_summary_trigger', key: 'summaryTriggerTokens', type: 'int' },
+  { sel: '#tm_summary_trigger', key: 'summaryTriggerFloors', type: 'int' },
   // -1 表示"用服务端建议", 所以下限是 -1 而不是 0
   { sel: '#tm_summary_keep', key: 'summaryKeepRecentMessages', type: 'int', min: -1 },
   { sel: '#tm_summary_hide', key: 'summaryHideAfter', type: 'bool' },
@@ -384,7 +384,7 @@ export function mountPanel({ metaStore, injector, extractor, summarizer, log, bu
   }
 
   // ---------- 渲染: 默认值提示 (放到输入框占位里) ----------
-  // data-tm-default 写的是 defaults 里的路径 (如 retrieval.topK / summary.triggerTokens),
+  // data-tm-default 写的是 defaults 里的路径 (如 retrieval.topK / summary.triggerFloors),
   // 统一按路径取值, 新增字段不用再改这里。
   function renderDefaultHints() {
     const d = metaStore.getDefaults();
@@ -400,7 +400,7 @@ export function mountPanel({ metaStore, injector, extractor, summarizer, log, bu
     if (topk && d?.retrieval?.topK) topk.placeholder = `${d.retrieval.topK}（0=默认）`;
     if (budget && d?.retrieval?.tokenBudget) budget.placeholder = `${d.retrieval.tokenBudget}（0=默认）`;
     if (digest && d?.summary?.digestMaxTokens) digest.placeholder = `${d.summary.digestMaxTokens}（0=默认）`;
-    if (trigger && d?.summary?.triggerTokens) trigger.placeholder = `${d.summary.triggerTokens}（0=默认）`;
+    if (trigger && d?.summary?.triggerFloors) trigger.placeholder = `${d.summary.triggerFloors}（0=默认）`;
   }
 
   // ---------- 渲染: 总结与压缩 ----------
@@ -421,18 +421,18 @@ export function mountPanel({ metaStore, injector, extractor, summarizer, log, bu
 
     const st = summarizer.status();
     const presets = (p.presets ?? [])
-      .map((x) => `${esc(x.contextSize)} → ${esc(x.triggerTokens)}（${esc(x.note)}）`).join('；');
+      .map((x) => `${esc(x.floors)} 层（${esc(x.note)}）`).join('；');
     policyEl.innerHTML = `
-      <div class="tm-mono">阈值 ${esc(st.triggerTokens ?? '?')} · 下限 ${esc(p.minTokens)} ·
-        单批上限 ${esc(p.maxBatchTokens)} token · 摘要上限 ${esc(p.maxSummaryChars)} 字</div>
-      <div class="tm-muted">量纲：${esc(metaStore.getScoring()?.tokenEstimation?.formula ?? '未声明')}</div>
+      <div class="tm-mono">触发 ${esc(st.triggerFloors ?? '?')} 层 · 保留 ${esc(st.keepRecent)} 层不隐藏 ·
+        单批安全阀 ${esc(p.maxBatchTokens)} token · 摘要上限 ${esc(p.maxSummaryChars)} 字</div>
+      <div class="tm-muted">触发量纲：楼层数（聊天记录条数，用户与角色各占一层）。${esc(metaStore.getScoring()?.tokenEstimation?.formula ?? '未声明')}</div>
       <div class="tm-muted">${esc(p.rationale ?? '')}</div>
-      <div class="tm-muted">按上下文选择：${presets || '未声明'}</div>`;
+      <div class="tm-muted">按对话节奏选择：${presets || '未声明'}</div>`;
 
-    const over = st.tokens >= (st.triggerTokens ?? Infinity);
-    stateEl.innerHTML = `待总结 <b class="${over ? 'tm-ok' : ''}">${esc(st.tokens)}</b> / ${esc(st.triggerTokens ?? '?')} token`
-      + ` · ${esc(st.pendingMessages)} 条（楼层 ${esc(st.pendingFrom)}–${esc(st.lastMessageIndex)}）`
-      + ` · 已总结至 ${esc(st.summarizedUpTo)} · 已隐藏 ${esc(st.hiddenCount)} 条`
+    const over = st.pendingFloors >= (st.triggerFloors ?? Infinity);
+    stateEl.innerHTML = `待总结 <b class="${over ? 'tm-ok' : ''}">${esc(st.pendingFloors)}</b> / ${esc(st.triggerFloors ?? '?')} 层`
+      + `（楼层 ${esc(st.pendingFrom)}–${esc(st.lastMessageIndex)} · 约 ${esc(st.tokens)} token）`
+      + ` · 已总结至 ${esc(st.summarizedUpTo)} · 已隐藏 ${esc(st.hiddenCount)} 层`
       + (st.running ? ' · <span class="tm-muted">进行中…</span>' : '');
 
     renderSummaryResult(resultEl);
@@ -453,10 +453,10 @@ export function mountPanel({ metaStore, injector, extractor, summarizer, log, bu
     const hideLine = !r.hidden
       ? '未隐藏正文'
       : (hid.ok
-        ? `已隐藏 ${esc(hid.count)} 条（${hid.via === 'slash' ? '酒馆命令' : '直接置位'}，楼层 ${esc(hid.from)}–${esc(hid.to)}）`
+        ? `已隐藏 ${esc(hid.count)} 层（${hid.via === 'slash' ? '酒馆命令' : '直接置位'}，楼层 ${esc(hid.from)}–${esc(hid.to)}）`
         : `<span class="tm-blocked">隐藏未生效：${esc(hid.reason ?? '')}</span>`);
     resultEl.innerHTML =
-      `<div>楼层 ${esc(r.coveredFrom)}–${esc(r.coveredTo)}（${esc(r.messageCount)} 条 · 约 ${esc(r.inputTokens)} token）`
+      `<div>楼层 ${esc(r.coveredFrom)}–${esc(r.coveredTo)}（${esc(r.messageCount)} 层 · 约 ${esc(r.inputTokens)} token）`
       + ` → 摘要记忆 #${esc(r.summaryMemoryId ?? '?')}`
       + `${r.deduped ? '（复用既有摘要）' : ''}${r.truncated ? '（已按上限截断）' : ''}</div>`
       + `<div class="tm-muted">${hideLine}</div>`;
@@ -533,8 +533,8 @@ export function mountPanel({ metaStore, injector, extractor, summarizer, log, bu
       set('summary', '关');
     } else {
       const st = summarizer.status();
-      const thr = st.triggerTokens;
-      set('summary', thr ? `${st.tokens}/${thr} token · 隐藏 ${st.hiddenCount} 条` : '阈值未载入');
+      const thr = st.triggerFloors;
+      set('summary', thr ? `${st.pendingFloors}/${thr} 层 · 隐藏 ${st.hiddenCount} 层` : '阈值未载入');
     }
 
     const eps = snap.meta?.endpoints ?? [];
@@ -596,7 +596,7 @@ export function mountPanel({ metaStore, injector, extractor, summarizer, log, bu
     if (unhideBtn) {
       const st = summarizer.status();
       unhideBtn.disabled = st.hiddenCount <= 0;
-      unhideBtn.title = st.hiddenCount <= 0 ? '当前没有已隐藏的正文' : `把已隐藏的 ${st.hiddenCount} 条放回 prompt`;
+      unhideBtn.title = st.hiddenCount <= 0 ? '当前没有已隐藏的正文' : `把已隐藏的 ${st.hiddenCount} 层放回 prompt`;
     }
   }
 
@@ -654,7 +654,7 @@ export function mountPanel({ metaStore, injector, extractor, summarizer, log, bu
       else if (report.error) toast('error', `总结失败：${report.error}`);
       else {
         const hid = report.hidden;
-        const tail = hid?.ok ? `，已隐藏 ${hid.count} 条` : '';
+        const tail = hid?.ok ? `，已隐藏 ${hid.count} 层` : '';
         toast('success', `总结完成：楼层 ${report.coveredFrom}–${report.coveredTo}${tail}`);
       }
       renderSummary();
@@ -671,7 +671,7 @@ export function mountPanel({ metaStore, injector, extractor, summarizer, log, bu
     try {
       const r = await summarizer.unhideAll();
       if (r.skipped) toast('warning', r.skipped);
-      else if (r.ok) toast('success', `已取消隐藏 ${r.count} 条（楼层 ${r.from}–${r.to}）`);
+      else if (r.ok) toast('success', `已取消隐藏 ${r.count} 层（楼层 ${r.from}–${r.to}）`);
       else toast('error', `取消隐藏失败：${r.reason ?? '未知原因'}`);
       renderSummary();
       updateActionButtons();

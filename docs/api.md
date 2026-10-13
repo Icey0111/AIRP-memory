@@ -441,7 +441,7 @@ curl http://127.0.0.1:7780/api/meta
 | `defaults` | **生效**默认值：`retrieval`（受 config 影响）/ `memory` / `chunk` / `stance` / `forget` / `summary` |
 | `enums` | 枚举与标签，每项 `{ constrained, options:[{value,label,...}], note }` |
 | `scoring` | 打分口径：`retrieval` / `forget` / `tokenEstimation`，含 `formula` 原文 |
-| `summaryPolicy` | 长对话压缩策略：触发阈值/下限/单批上限/摘要长度上限/建议保留条数/**前情提要段配置 `digest`**/理由/预设/合法区间 |
+| `summaryPolicy` | 长对话压缩策略：**触发楼层数**/单批安全阀/摘要长度上限/建议保留楼层数/**前情提要段配置 `digest`**/理由/节奏预设/合法区间 |
 | `thresholds` | `supersedeSimilarity` / `similarityMetric` |
 | `contextSections` | 注入文本的段落顺序（画像 → 前情提要 → 相关记忆 → 相关细节） |
 | `digestFormat` | 【前情提要】的段落形状：`header` 与每行模板 `line`（前端只展示、不解析） |
@@ -553,7 +553,7 @@ curl http://127.0.0.1:7780/api/meta
 
 > **但注入时它不参与相似度打分。** 摘要覆盖的正文会被 `/hide` 移出 prompt，摘要是那段剧情唯一的载体；若按 FTS 取 top-k，当前轮关键词不命中就整段丢失（而且摘要长、关键词稀疏，在 bm25 里天然吃亏）。所以注入时摘要被**排除出相似度召回**，改由【前情提要】段按楼层顺序常驻 —— 见 §5 与 [summarization.md](./summarization.md) 第 5 节。
 
-> **何时调用由前端决定。** 服务端只负责"给一段文本，还一条摘要"。触发阈值、下限、单批上限、摘要长度上限都在 `GET /api/meta` 的 `summaryPolicy` 里下发，前端不另存一份。取值依据与调参建议见 [summarization.md](./summarization.md)。
+> **何时调用由前端决定。** 服务端只负责"给一段文本，还一条摘要"。触发楼层数、单批安全阀、摘要长度上限都在 `GET /api/meta` 的 `summaryPolicy` 里下发，前端不另存一份。取值依据与调参建议见 [summarization.md](./summarization.md)。
 
 ### 请求
 
@@ -604,25 +604,28 @@ curl -X POST http://127.0.0.1:7780/api/summarize \
 
 ```json
 {
-  "triggerTokens": 6000,
-  "minTokens": 1500,
+  "triggerFloors": 10,
   "maxBatchTokens": 12000,
   "maxSummaryChars": 800,
   "defaultImportance": 0.6,
   "keepRecentMessages": 6,
-  "trigger": "estimated-tokens",
+  "trigger": "floor-count",
   "digest": {
     "maxTokens": 2000,
     "scope": "chat",
     "limits": { "min": 1, "max": 8000 },
     "rationale": "…为什么预算不足时保新丢旧…"
   },
-  "rationale": "…为什么取这个量级…",
-  "presets": [{ "contextSize": 16384, "triggerTokens": 6000, "note": "默认量级, 兼顾粒度与安全" }],
-  "limits": { "min": 1000, "max": 20000 }
+  "rationale": "…为什么按楼层而不是按 token 触发…",
+  "presets": [{ "floors": 10, "note": "默认量级, 大致一小场戏" }],
+  "limits": { "min": 2, "max": 200 }
 }
 ```
 
-`scoring.tokenEstimation.charsPerToken` 是前端做模糊估算用的系数 —— **前端按它算，不写死 2**；`formula` 文本里的数字由同一个常量生成，不会出现"公式说 2、参数写 3"的分裂。
+**触发量纲是楼层数**（`trigger: "floor-count"`）：`triggerFloors` 指未总结区间的**聊天记录条数**（用户与角色各占一层，即酒馆里"第几楼"），达到该值就触发一次总结。之所以不用 token：单条输出的长短因人而异，固定 token 阈值等于把"什么时候会总结"交给了用户的语速，话密的人三五层就触发、话少的人几十层才触发，用户无从预期。楼层数则是用户能直接看到的量。
+
+⚠️ `maxBatchTokens` **不参与触发判断** —— 它只是"单批送进 LLM 的输入安全阀"（楼层数与文本量不成正比）。前端拿它算单批字符上限；触发的判断入口只有 `triggerFloors`。
+
+`scoring.tokenEstimation.charsPerToken` 是前端做模糊估算用的系数 —— **前端按它算，不写死 2**；`formula` 文本里的数字由同一个常量生成，不会出现"公式说 2、参数写 3"的分裂。它现在只服务两件事：注入预算、单批安全阀。
 
 `summaryPolicy.digest` 是【前情提要】段的配置：`maxTokens` 为该段的独立预算（前端"前情提要预算"输入框填 0 即用它），`scope` 固定为 `chat`（只拼本聊天的摘要链）。

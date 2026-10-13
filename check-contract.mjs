@@ -118,6 +118,29 @@ if (reachable) {
   check('可见性规则文案非空', typeof store.getRules()?.visibility === 'string' && store.getRules().visibility.length > 0);
 
   // ============================================================
+  // 4b) 总结策略: 触发量纲必须是楼层数 (前端据此累计, 不能是 token)
+  // ============================================================
+  console.log('\n--- 总结触发量纲 ---');
+  const sp = store.summaryPolicy();
+  check('summaryPolicy 已下发', sp !== null && typeof sp === 'object');
+  check('触发方式标识为 floor-count (前端据此选择累计逻辑)',
+    sp?.trigger === 'floor-count', String(sp?.trigger));
+  check('触发楼层数是正数且落在服务端自述的合法区间内',
+    Number.isFinite(sp?.triggerFloors)
+    && sp.triggerFloors >= sp.limits.min && sp.triggerFloors <= sp.limits.max,
+    `triggerFloors=${sp?.triggerFloors} limits=${JSON.stringify(sp?.limits)}`);
+  check('契约里不再下发 token 触发阈值 (量纲已统一为楼层)',
+    sp?.triggerTokens === undefined && sp?.minTokens === undefined);
+  check('defaults.summary.triggerFloors 与策略同源',
+    store.getDefaults().summary.triggerFloors === sp.triggerFloors,
+    `defaults=${store.getDefaults().summary.triggerFloors} policy=${sp.triggerFloors}`);
+  check('节奏预设每项都带 floors 与 note (面板原样展示)',
+    (sp?.presets ?? []).length > 0
+    && sp.presets.every((p) => Number.isFinite(p.floors) && typeof p.note === 'string'));
+  check('单批安全阀仍下发 (不参与触发判断, 但前端要展示)',
+    Number.isFinite(sp?.maxBatchTokens) && sp.maxBatchTokens > 0);
+
+  // ============================================================
   // 6) 实际调用: /api/context 可用且形状符合预期
   // ============================================================
   console.log('\n--- 实测 /api/context ---');

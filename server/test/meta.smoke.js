@@ -188,8 +188,8 @@ check('注入段落顺序下发 (画像 → 前情提要 → 相关记忆 → �
   JSON.stringify(meta.contextSections.map((s) => s.key)));
 
 // ============================================================
-// 4b) 总结策略: 触发阈值与 token 系数必须与常量同源
-//     前端据此累计 token 并决定何时压缩, 所以这些数字不能在两端各存一份
+// 4b) 总结策略: 触发楼层数与 token 系数必须与常量同源
+//     前端据此累计楼层并决定何时压缩, 所以这些数字不能在两端各存一份
 // ============================================================
 console.log('\n--- 总结策略同源 ---');
 check('summaryPolicy 与常量同源', eqArr(meta.summaryPolicy, SUMMARY_POLICY));
@@ -201,19 +201,25 @@ check('token 估算系数下发 (前端按同一系数估算, 不写死 2)',
 check('token 估算公式里的数字与 charsPerToken 一致 (不会两处各说一套)',
   meta.scoring.tokenEstimation.formula.includes(String(meta.scoring.tokenEstimation.charsPerToken)));
 check('defaults.summary 的生效值与 summaryPolicy 同源',
-  meta.defaults.summary.triggerTokens === SUMMARY_POLICY.triggerTokens
+  meta.defaults.summary.triggerFloors === SUMMARY_POLICY.triggerFloors
   && meta.defaults.summary.keepRecentMessages === SUMMARY_POLICY.keepRecentMessages
   && meta.defaults.summary.maxSummaryChars === SUMMARY_POLICY.maxSummaryChars,
   JSON.stringify(meta.defaults.summary));
-check('触发阈值自身落在合法区间内 (min <= trigger <= max)',
-  SUMMARY_POLICY.triggerTokens >= SUMMARY_POLICY.limits.min
-  && SUMMARY_POLICY.triggerTokens <= SUMMARY_POLICY.limits.max);
-check('上下文规模预设随规模单调不减 (前端原样展示, 不自作调整)',
-  meta.summaryPolicy.presets.every((p, i, a) => i === 0 || p.triggerTokens >= a[i - 1].triggerTokens),
-  JSON.stringify(meta.summaryPolicy.presets.map((p) => p.triggerTokens)));
-check('保留条数不小于 0 且单批上限不低于触发阈值',
+check('触发量纲是楼层数, 而不是 token',
+  SUMMARY_POLICY.trigger === 'floor-count'
+  && Number.isFinite(SUMMARY_POLICY.triggerFloors)
+  && SUMMARY_POLICY.triggerTokens === undefined
+  && SUMMARY_POLICY.minTokens === undefined);
+check('触发楼层数落在合法区间内 (min <= triggerFloors <= max)',
+  SUMMARY_POLICY.triggerFloors >= SUMMARY_POLICY.limits.min
+  && SUMMARY_POLICY.triggerFloors <= SUMMARY_POLICY.limits.max,
+  `${SUMMARY_POLICY.triggerFloors} ∈ [${SUMMARY_POLICY.limits.min}, ${SUMMARY_POLICY.limits.max}]`);
+check('节奏预设按楼层数单调不减 (前端原样展示, 不自作调整)',
+  meta.summaryPolicy.presets.every((p, i, a) => i === 0 || p.floors >= a[i - 1].floors),
+  JSON.stringify(meta.summaryPolicy.presets.map((p) => p.floors)));
+check('保留楼层数不小于 0; 单批安全阀为正数 (触发不依赖它)',
   SUMMARY_POLICY.keepRecentMessages >= 0
-  && SUMMARY_POLICY.maxBatchTokens >= SUMMARY_POLICY.triggerTokens);
+  && Number.isFinite(SUMMARY_POLICY.maxBatchTokens) && SUMMARY_POLICY.maxBatchTokens > 0);
 
 // 前情提要段: 摘要必须"必然在场", 所以它的预算、筛选范围、段落形状都要下发给前端
 check('前情提要段预算下发且落在合法区间内',

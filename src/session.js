@@ -172,7 +172,7 @@ export function collectRange({ fromIndex = 0, toIndex = -1, maxChars = 0 } = {})
  *
  * 实现口径: 酒馆的 /hide 与 /unhide 本质就是对 chat[i].is_system 置位, 而本模块的
  * usableMessage() 同样跳过 is_system —— 所以隐藏之后这些楼层既不会进 prompt,
- * 也不会再被抽取或计入累计 token, 两端天然一致, 不需要额外的排除逻辑。
+ * 也不会再被抽取或计入累计楼层, 两端天然一致, 不需要额外的排除逻辑。
  *
  * 优先调用酒馆原生命令 (它会自己刷新 UI 上的 ghost 标记); 命令不可用时退回直接置位,
  * 并尽力通知 UI 刷新。失败不抛错。

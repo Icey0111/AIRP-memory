@@ -52,8 +52,9 @@ export const DEFAULT_SETTINGS = {
   // ---- 总结与压缩 (长对话) ----
   // 阈值类字段填 0 / -1 表示"用服务端建议值" (/api/meta 的 summaryPolicy):
   // 前端不复制一份阈值, 服务端调参后前端自动跟随。
+  // 触发按**楼层数**计 (聊天记录条数, 用户与角色各占一层), 不按 token —— 理由见后端 SUMMARY_POLICY。
   summaryEnabled: false,
-  summaryTriggerTokens: 0,        // 0 = 用服务端建议 (当前 6000)
+  summaryTriggerFloors: 0,        // 0 = 用服务端建议 (当前 10 层)
   summaryKeepRecentMessages: -1,  // -1 = 用服务端建议 (当前 6); 0 = 被总结的正文全部隐藏
   summaryHideAfter: true,         // 总结完成后隐藏被覆盖的正文
 
@@ -67,16 +68,24 @@ export const DEFAULT_SETTINGS = {
 /** 由 UI 自身维护、没有面板控件的持久化键。静态检查据此豁免"每个键都必须有控件"。 */
 export const NO_UI_KEYS = ['uiCollapsed'];
 
+/**
+ * 已废弃的键: 语义已变或改名 (如触发口径从估算 token 改成楼层数)。
+ * 升级时清掉, 免得老配置里积一堆没有 UI、也没有代码读取的死键。
+ */
+export const DEPRECATED_SETTINGS = ['summaryTriggerTokens'];
+
 function clone(obj) {
   return JSON.parse(JSON.stringify(obj));
 }
 
-/** 保证 extension_settings[EXT_KEY] 存在, 并补齐新增字段 (老配置平滑升级) */
+/** 保证 extension_settings[EXT_KEY] 存在, 并补齐新增字段、清理废弃字段 (老配置平滑升级) */
 export function ensureSettings() {
   if (!extension_settings[EXT_KEY] || typeof extension_settings[EXT_KEY] !== 'object') {
     extension_settings[EXT_KEY] = clone(DEFAULT_SETTINGS);
   } else {
-    extension_settings[EXT_KEY] = { ...clone(DEFAULT_SETTINGS), ...extension_settings[EXT_KEY] };
+    const merged = { ...clone(DEFAULT_SETTINGS), ...extension_settings[EXT_KEY] };
+    for (const k of DEPRECATED_SETTINGS) delete merged[k];
+    extension_settings[EXT_KEY] = merged;
   }
   return extension_settings[EXT_KEY];
 }

@@ -72,7 +72,7 @@ git clone https://github.com/Icey0111/AIRP-memory <SillyTavern>/public/scripts/e
 |---|---|
 | **注入** | 每轮生成前把相关记忆拼进 prompt（`/api/context`）。可设注入位置、深度、角色、topK、token 预算、前情提要预算 |
 | **写入** | 把对话沉淀成记忆。默认**关闭**；开启后每 N 条角色消息自动跑一轮，也可随时手动触发 |
-| **总结** | 长对话压缩。累计估算 token 达阈值 → 压成一条摘要记忆 → 隐藏被覆盖的正文。默认**关闭** |
+| **总结** | 长对话压缩。未总结正文累计到阈值（默认 **10 层楼**）→ 压成一条摘要记忆 → 隐藏被覆盖的正文。默认**关闭** |
 | **手动** | 「立即抽取并写入」「检索预览」——后者能看到实际会注入的【前情提要】整段，以及命中了哪几条记忆、各自分数 |
 | **诊断** | 重新拉契约、查看端点能力与最近一次运行状态 |
 
@@ -87,10 +87,10 @@ git clone https://github.com/Icey0111/AIRP-memory <SillyTavern>/public/scripts/e
         → 画像重归纳（由当前生效的观察块归纳出常驻画像）
 ```
 
-长对话另有**总结**这一路（与前四步独立）：累计未总结正文的估算 token 达到阈值（默认 6000）时，
+长对话另有**总结**这一路（与前四步独立）：未总结正文累计到 **10 层楼**（默认，用户消息与角色消息各占一层）时，
 把它压成一条 `type=summary` 的记忆，并把已被覆盖的正文用酒馆原生的 `/hide` 隐藏 ——
-隐藏只是移出 prompt，**不删除、随时可放回**。阈值、单批上限、摘要长度上限、保留条数全部由
-`/api/meta` 下发，前端不写死。取值依据见 [`docs/summarization.md`](docs/summarization.md)。
+隐藏只是移出 prompt，**不删除、随时可放回**。触发楼层数、单批安全阀、摘要长度上限、保留楼层数全部由
+`/api/meta` 下发，前端不写死。之所以按楼层而不按 token，见 [`docs/summarization.md` §2](docs/summarization.md)。
 
 注入进 prompt 的内容因此是四段：**角色画像 → 前情提要 → 相关记忆 → 相关细节**。
 第二段【前情提要】是按楼层顺序拼起来的摘要链 —— 它**不参与相似度检索**：正文既然已经被隐藏，
@@ -115,7 +115,7 @@ AIRP-memory/                  酒馆扩展本体（仓库根 = 扩展根）
 │   ├── session.js            chatId / characterId 解析、对话区间收集、隐藏楼层、per-chat 状态
 │   ├── injector.js           生成前注入闭环
 │   ├── extractor.js          写入闭环（四个抽取端点，逐步静默降级）
-│   ├── summarizer.js         总结闭环（累计 token → 压缩 → 隐藏已总结正文）
+│   ├── summarizer.js         总结闭环（累计楼层 → 压缩 → 隐藏已总结正文）
 │   ├── ui.js                 设置面板渲染与绑定
 │   ├── bus.js / log.js       事件总线、日志
 ├── check-static.mjs          静态一致性检查（不需要酒馆）
@@ -178,7 +178,7 @@ node check-contract.mjs [baseUrl]        # 默认 http://127.0.0.1:7780
 | 文档 | 内容 |
 |---|---|
 | [`docs/api.md`](docs/api.md) | HTTP 契约全量说明；§12 是 `GET /api/meta` 契约描述，§13 是 `POST /api/summarize` |
-| [`docs/summarization.md`](docs/summarization.md) | 长对话怎么总结：多少 token 一次、估算口径、隐藏正文的机制与取舍、**摘要如何回到 prompt（【前情提要】, §5）** |
+| [`docs/summarization.md`](docs/summarization.md) | 长对话怎么总结：多少层一次、**为什么不用 token**、隐藏正文的机制与取舍、**摘要如何回到 prompt（【前情提要】, §5）** |
 | [`docs/frontend-v0.md`](docs/frontend-v0.md) | 扩展的安装、设置项、注入/写入/总结时序、id 口径 |
 | [`docs/database-design-v1.md`](docs/database-design-v1.md) ~ [`v4`](docs/database-design-v4.md) | 结构层设计演进（一阶记忆 → 六要素 → 属性向量 → 立场） |
 

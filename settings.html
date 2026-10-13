@@ -153,21 +153,21 @@
               <span>累计到阈值自动总结</span>
             </label>
             <label class="tm-row">
-              <span class="tm-label">触发阈值</span>
-              <input id="tm_summary_trigger" class="text_pole tm-num" type="number" min="0" max="20000" step="500">
-              <span class="tm-muted">估算 token</span>
-              <span class="tm-muted tm-placeholder-default" data-tm-default="summary.triggerTokens"></span>
+              <span class="tm-label">触发楼层数</span>
+              <input id="tm_summary_trigger" class="text_pole tm-num" type="number" min="0" max="200" step="1">
+              <span class="tm-muted">层（未总结的聊天记录条数，用户与角色各占一层）</span>
+              <span class="tm-muted tm-placeholder-default" data-tm-default="summary.triggerFloors"></span>
             </label>
             <label class="tm-row">
               <span class="tm-label">保留最近</span>
               <input id="tm_summary_keep" class="text_pole tm-num" type="number" min="-1" max="100" step="1">
-              <span class="tm-muted">条不隐藏（<b>0 = 被总结的正文全部隐藏</b>；-1 = 用服务端建议）</span>
+              <span class="tm-muted">层不隐藏（<b>0 = 被总结的正文全部隐藏</b>；-1 = 用服务端建议）</span>
             </label>
             <label class="checkbox_label" for="tm_summary_hide">
               <input id="tm_summary_hide" type="checkbox">
               <span>总结后隐藏被覆盖的正文</span>
             </label>
-            <div class="tm-hint">隐藏走酒馆原生的 <code>/hide</code>（等价于给楼层置 <code>is_system</code>）：这些消息不进 prompt，也不再计入累计 token，因此不会被重复总结。随时可用下面的「取消隐藏」放回。</div>
+            <div class="tm-hint">隐藏走酒馆原生的 <code>/hide</code>（等价于给楼层置 <code>is_system</code>）：这些消息不进 prompt，也不再计入累计楼层，因此不会被重复总结。随时可用下面的「取消隐藏」放回。</div>
 
             <div class="tm-subsection">
               <div class="tm-subsection-title">服务端策略</div>

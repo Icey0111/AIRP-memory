@@ -272,7 +272,7 @@ export function createRouter(db, { llm = null, embed = null, retrieval = {}, run
   }));
 
   // ---------- 长对话压缩 (LLM) ----------
-  // 前端累计估算 token 达阈值时调用; 阈值来自 /api/meta 的 summaryPolicy
+  // 前端累计楼层数达阈值时调用; 阈值来自 /api/meta 的 summaryPolicy
   router.post('/api/summarize', handleAsync(async (req, res) => {
     if (!llm) throw new Error('LLM 客户端未初始化');
     const {
