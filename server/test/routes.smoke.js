@@ -333,18 +333,26 @@ check('非 llm/embedding 配置节被拒绝 (端口等只能改文件)',
 console.log('\n--- 令牌鉴权 ---');
 check('/health 免检 (存活探针不携带任何数据)',
   (await req('GET', '/tok/health')).status === 200);
-const noTok = await req('GET', '/tok/api/status');
-check('无令牌 => 401 + 明确文案 (与全站错误口径一致)',
-  noTok.status === 401 && noTok.body.ok === false && noTok.body.error.includes('访问令牌'),
-  JSON.stringify(noTok.body));
-const badTok = await req('GET', '/tok/api/status');
-// req() 不带令牌头, 这里手动带一个错的
-const bad = await fetch(`${base}/tok/api/status`, { headers: { 'X-TM-Token': 'wrong' } });
-check('错误令牌 => 401', bad.status === 401);
-const good = await fetch(`${base}/tok/api/status`, { headers: { 'X-TM-Token': 'secret-token' } });
-const goodBody = await good.json();
-check('正确令牌 => 200 且业务正常', good.status === 200 && goodBody.ok === true
-  && Number.isFinite(goodBody.schemaVersion));
+// 本机回环 (127.0.0.1) 发来的请求永远免检 —— 所以 HTTP 层面直接 200
+check('本机回环请求免令牌 (回环 = 信任, 本机面板零配置)',
+  (await req('GET', '/tok/api/status')).status === 200);
+// 远程语义用中间件单测模拟 (fetch 打不进非回环地址)
+const auth = createTokenAuth('secret-token');
+function probeAuth(remoteAddr, token) {
+  let status = 0, body = null, nextCalled = false;
+  const res = { status(c) { status = c; return this; }, json(o) { body = o; return this; } };
+  auth({ path: '/api/status', socket: { remoteAddress: remoteAddr }, headers: token ? { 'x-tm-token': token } : {} }, res, () => { nextCalled = true; });
+  return { status, body, nextCalled };
+}
+const r1 = probeAuth('192.168.1.50', null);
+check('远程无令牌 => 401 + 明确文案', r1.status === 401 && r1.body.ok === false && r1.body.error.includes('访问令牌'),
+  JSON.stringify(r1.body));
+const r2 = probeAuth('192.168.1.50', 'wrong');
+check('远程错误令牌 => 401', r2.status === 401);
+const r3 = probeAuth('192.168.1.50', 'secret-token');
+check('远程正确令牌 => 放行', r3.nextCalled === true);
+const r4 = probeAuth('::ffff:127.0.0.1', null);
+check('IPv6 映射的回环同样免检', r4.nextCalled === true);
 
 // ---------- 收尾 ----------
 server.close();
