@@ -7,7 +7,9 @@
 //
 // 这是前端能工作的前提: 酒馆页面与记忆服务不同源, 浏览器会拦截无 CORS 头的响应。
 
-const LOCAL_ORIGIN_RE = /^https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/i;
+// *.localhost 子域: Tauri 系桌面客户端的 webview 源是 http://tauri.localhost ——
+// 主机名不是裸 localhost, 但 RFC 6761 规定 *.localhost 与 localhost 同样指向本机, 等价可信
+const LOCAL_ORIGIN_RE = /^https?:\/\/(?:[\w-]+\.)?(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/i;
 
 const ALLOW_METHODS = 'GET,POST,PATCH,PUT,DELETE,OPTIONS';
 // X-TM-Token: 访问令牌鉴权 (server.token 非空时启用) —— 必须进预检许可, 否则
