@@ -22,6 +22,7 @@ function toast(kind, msg) {
 const FIELDS = [
   { sel: '#tm_enabled', key: 'enabled', type: 'bool' },
   { sel: '#tm_base_url', key: 'baseUrl', type: 'str', evt: 'change', after: 'reloadMeta' },
+  { sel: '#tm_access_token', key: 'accessToken', type: 'str', evt: 'change', after: 'reloadMeta' },
   { sel: '#tm_timeout', key: 'requestTimeoutMs', type: 'int', min: 1000 },
 
   { sel: '#tm_inject_enabled', key: 'injectEnabled', type: 'bool' },

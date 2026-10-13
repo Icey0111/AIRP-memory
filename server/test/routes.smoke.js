@@ -12,6 +12,7 @@ import Database from 'better-sqlite3';
 import { migrate, getSchemaVersion } from '../src/db/migrate.js';
 import { createRouter, jsonErrorHandler } from '../src/api/routes.js';
 import { createConfigApi } from '../src/services/configService.js';
+import { createTokenAuth } from '../src/api/auth.js';
 import { createMemory } from '../src/services/memoryService.js';
 import { addChunk } from '../src/services/chunkService.js';
 import { createLlmClient } from '../src/services/llmClient.js';
@@ -65,6 +66,13 @@ app.use('/unconf', createRouter(db, { llm: unconfLlm, embed: okEmbed }));
 app.use('/noembed', createRouter(db, { llm: okLlm, embed: null }));
 // embedding 客户端存在但未配置 (报错)
 app.use('/unconfembed', createRouter(db, { llm: okLlm, embed: unconfEmbed }));
+// 令牌鉴权: server.token 非空时的行为 (局域网/手机访问的安全前提)
+const tokApp = express();
+tokApp.use(express.json());
+tokApp.use(createTokenAuth('secret-token'));
+tokApp.use(createRouter(db, { llm: okLlm, embed: okEmbed }));
+app.use('/tok', tokApp);
+
 // 配置读写: 挂临时配置文件 (真实场景是 server/config.json)
 const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-cfg-'));
 const cfgPath = path.join(cfgDir, 'config.json');
@@ -320,6 +328,23 @@ const cfgForbidden = await req('POST', '/cfg/api/config', { server: { port: 9999
 check('非 llm/embedding 配置节被拒绝 (端口等只能改文件)',
   cfgForbidden.status === 400 && cfgForbidden.body.error?.includes('不允许修改'),
   JSON.stringify(cfgForbidden.body));
+
+// ---------- 9) 访问令牌鉴权 ----------
+console.log('\n--- 令牌鉴权 ---');
+check('/health 免检 (存活探针不携带任何数据)',
+  (await req('GET', '/tok/health')).status === 200);
+const noTok = await req('GET', '/tok/api/status');
+check('无令牌 => 401 + 明确文案 (与全站错误口径一致)',
+  noTok.status === 401 && noTok.body.ok === false && noTok.body.error.includes('访问令牌'),
+  JSON.stringify(noTok.body));
+const badTok = await req('GET', '/tok/api/status');
+// req() 不带令牌头, 这里手动带一个错的
+const bad = await fetch(`${base}/tok/api/status`, { headers: { 'X-TM-Token': 'wrong' } });
+check('错误令牌 => 401', bad.status === 401);
+const good = await fetch(`${base}/tok/api/status`, { headers: { 'X-TM-Token': 'secret-token' } });
+const goodBody = await good.json();
+check('正确令牌 => 200 且业务正常', good.status === 200 && goodBody.ok === true
+  && Number.isFinite(goodBody.schemaVersion));
 
 // ---------- 收尾 ----------
 server.close();

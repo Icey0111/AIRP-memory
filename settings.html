@@ -35,6 +35,10 @@
               <span class="tm-label">服务地址</span>
               <input id="tm_base_url" class="text_pole" type="text" placeholder="http://127.0.0.1:7780">
             </label>
+            <label class="tm-row" title="服务端 config.json 的 server.token 非空时必填; 本机访问留空即可">
+              <span class="tm-label">访问令牌</span>
+              <input id="tm_access_token" class="text_pole" type="password" autocomplete="off" placeholder="服务启用令牌鉴权时填写">
+            </label>
             <label class="tm-row">
               <span class="tm-label">请求超时</span>
               <input id="tm_timeout" class="text_pole tm-num" type="number" min="1000" max="600000" step="1000">

@@ -22,7 +22,8 @@ npm test                             # 三套冒烟测试（内存库，不碰�
 | `db.path` | SQLite 文件路径，默认 `./data/memory.db` |
 | `retrieval.topK` | `/api/retrieve`、`/api/context` 的默认 topK（默认 8，请求体可覆盖） |
 | `retrieval.tokenBudget` | `/api/context` 的默认 token 预算（默认 1200，请求体可覆盖） |
-| `server.host / port` | 默认 `127.0.0.1:7780`，**不建议改绑 0.0.0.0**（服务无鉴权） |
+| `server.host / port` | 默认 `127.0.0.1:7780`；改绑 `0.0.0.0` 供局域网/手机访问时**必须同时设 `server.token`**（见下方鉴权） |
+| `server.token` | 访问令牌。非空即启用 `X-TM-Token` 头鉴权（`/health` 免检，常量时间比较），供局域网/手机安全访问 |
 | `server.cors.enabled` | 是否下发 CORS 头，默认 `true`（前端插件跨源调用必需） |
 | `server.cors.origins` | 额外放行的来源白名单（数组）。本机 `localhost` / `127.0.0.1` / `[::1]` 的任意端口始终放行 |
 
@@ -543,7 +544,7 @@ holder 与 target 同实体 → 400。
 4. **三阶属性观察只支持 `person` / `location`** 实体，`item` / `org` 的观察会被跳过并计入 `skipped`（表结构已支持，抽取器未开）。立场层则支持 `person` / `org` 互指。
 5. **`entities` id 体系有两套**：`character_profiles.character_id` 是**字符串**（角色卡名），`attribute_chunks.entity_id` / `stances.holder_id` 是 **people/orgs 表的整数 id**。前端两套别混用。
 6. **向量召回为内存暴力余弦**（加载全部当前生效块），块数 <10k 时毫秒级；超量需切 sqlite-vec（接口不变，数据不动）。
-7. **无鉴权**，仅监听 `127.0.0.1`，请勿绑定 `0.0.0.0` 或暴露到公网。
+7. 默认**无鉴权**且仅监听 `127.0.0.1`（回环 = 信任）。离开回环前**必须**设 `server.token` 启用令牌鉴权；令牌是可撤销的访问凭据，上游 API key 永远只在服务端。见 README「手机 / 局域网访问」。
 8. **`/api/profiles-derive` 在目标人物无生效观察块时会短路**，直接返回 `{ ok: true, entries: [], chunkCount: 0 }`，**不会触达 LLM**（因此此时即便 LLM 未配置也返回 200 而非 400）。前端别把"空 entries"当成功归纳，需先确认该 personId 已有 `attribute_chunks`。**注意短路判定发生在"LLM 客户端已注入"之后**：若 `llm` 完全不注入（服务端装配问题），仍会先返回 400 `LLM 客户端未初始化`。
 9. **静默降级的触发条件是"embedding 不可用"，不只是"embed 客户端为 null"** —— 客户端存在但 `baseUrl/apiKey/model` 未配全时同样算不可用。`/api/context`、`/api/retrieve`、`POST /api/chunks` 三种情况都静默降级，不会因为 embedding 未配置而报错。此点由 `test/meta.smoke.js` 针对"客户端在但未配置"这一格独立钉死（`embed === null` 与"存在但未配置"是两条不同分支，前者曾漏测）。
 10. **`/api/meta` 的 `defaults.retrieval` 是生效值**（受 `config.retrieval` 影响），不是示例值；改配置后重启生效。

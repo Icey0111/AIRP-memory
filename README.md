@@ -67,6 +67,20 @@ git clone https://github.com/Icey0111/AIRP-memory <SillyTavern>/public/scripts/e
 > `127.0.0.1` / `[::1]` 的任意端口。若酒馆挂在别的源（反向代理、局域网域名），
 > 把它加进 `server/config.json` 的 `server.cors.origins`。
 
+### 手机 / 局域网访问
+
+服务默认只监听本机（`127.0.0.1`）。手机浏览器访问电脑上的酒馆时，前端跑在手机上，
+要连的是**电脑**的记忆服务，做三件事：
+
+1. `server/config.json` 改两处：
+   - `server.host` 设为 `"0.0.0.0"`（监听局域网）；
+   - `server.token` 设一个随机字符串（**必设**——不设令牌就暴露局域网等于公开记忆库，服务启动时会警告）
+2. `server.cors.origins` 加上酒馆页面的源（如 `http://192.168.x.x:8000`）
+3. 手机端面板里：服务地址填 `http://<电脑局域网IP>:7780`，**访问令牌**填第 1 步的值
+
+令牌是「进门的钥匙」，可随时改掉撤销；上游 API key 仍然只在电脑端的服务里，手机端不碰。
+安全模型见 `docs/frontend-v0.md`。
+
 ---
 
 ## 怎么用

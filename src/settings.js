@@ -25,6 +25,11 @@ export const DEFAULT_SETTINGS = {
   // capabilities.llm.timeoutMs 另行放宽
   requestTimeoutMs: 15000,
 
+  // 服务端访问令牌 (server.token 非空时必填)。它只是"进门的钥匙"且可随时撤销,
+  // 不是上游 API key —— 上游密钥永远只在服务端 (docs/frontend-v0.md 的既定方案)。
+  // 手机/局域网访问场景必填, 本机回环访问留空即可。
+  accessToken: '',
+
   // ---- 注入 (每轮生成前) ----
   injectEnabled: true,
   // 下面两组取值是 SillyTavern 自身 API 的取值, 属宿主语义, 非后端语义

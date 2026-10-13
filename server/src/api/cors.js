@@ -10,7 +10,9 @@
 const LOCAL_ORIGIN_RE = /^https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/i;
 
 const ALLOW_METHODS = 'GET,POST,PATCH,PUT,DELETE,OPTIONS';
-const ALLOW_HEADERS = 'Content-Type';
+// X-TM-Token: 访问令牌鉴权 (server.token 非空时启用) —— 必须进预检许可, 否则
+// 局域网/手机场景下前端带着令牌的请求会被预检拦下
+const ALLOW_HEADERS = 'Content-Type, X-TM-Token';
 
 export function createCorsMiddleware({ enabled = true, origins = [] } = {}) {
   const extra = new Set((origins ?? []).map((o) => String(o).trim()).filter(Boolean));
@@ -42,10 +44,12 @@ export function createCorsMiddleware({ enabled = true, origins = [] } = {}) {
 }
 
 /** 供 /api/meta 如实报告当前生效的 CORS 策略 (不是文档承诺, 是运行时事实) */
-export function describeCors({ enabled = true, origins = [] } = {}) {
+export function describeCors({ enabled = true, origins = [] } = {}, { tokenRequired = false } = {}) {
   return {
     enabled,
     allowLoopbackAnyPort: enabled,
     extraOrigins: (origins ?? []).map(String),
+    /** 令牌鉴权是否启用 (server.token 非空); 前端据此提示"局域网访问需要填令牌" */
+    tokenRequired,
   };
 }
