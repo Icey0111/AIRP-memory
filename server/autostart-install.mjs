@@ -16,7 +16,8 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));   // 本脚本就在 server/ 里
-const SERVICE_ENTRY = path.join(SERVER_DIR, 'src', 'index.js');
+// 登录自启指向**看门狗**而非服务本体: 打开 TauriTavern 时服务才跟着启动 (用户要求的语义)
+const SERVICE_ENTRY = path.join(SERVER_DIR, 'watch-tavern.mjs');
 const VBS_NAME = 'tavern-memory-autostart.vbs';
 
 function startupDir() {
