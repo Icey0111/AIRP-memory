@@ -664,18 +664,26 @@ export function mountPanel({ api, metaStore, injector, extractor, summarizer, lo
   // ---------- 模型配置 (表单在前端, 密钥只发往服务端落盘, 不进酒馆 settings) ----------
   // 读取一律打码 (••••+末4位, 只供辨认); 密钥输入框从不回填任何值,
   // 留空提交 = "保持不变"。字段语义见 GET/POST /api/config (docs/api.md)。
+  // 表单依赖服务在线 (配置要发给服务端保存), 不可达时禁用并**说明原因与下一步** ——
+  // 只显示禁止光标不解释, 用户会以为面板坏了 (实测反馈)。
   let lastConfigView = null;
+  let lastConfigError = '';
 
   function renderConfigForm() {
     const status = document.getElementById('tm_cfg_status');
     const ids = ['tm_cfg_llm_baseurl', 'tm_cfg_llm_model', 'tm_cfg_llm_key',
       'tm_cfg_embed_baseurl', 'tm_cfg_embed_model', 'tm_cfg_embed_key'];
+    const save = document.getElementById('tm_cfg_save');
     const anyMissing = ids.some((id) => !document.getElementById(id));
-    if (anyMissing) return;
+    if (anyMissing || !status || !save) return;
+
     if (!lastConfigView) {
       for (const id of ids) document.getElementById(id).disabled = true;
-      document.getElementById('tm_cfg_save').disabled = true;
-      status.textContent = '未连接服务 —— 模型配置需服务在线才能读取/保存';
+      save.disabled = true;
+      // 两种"读不到"要分开说: 服务没起 vs 服务在跑但版本旧 (无 /api/config 端点)
+      status.textContent = /404|Not Found/i.test(lastConfigError)
+        ? '服务在线但版本较旧 (无模型配置接口) —— 重启记忆服务 (cd server && npm start) 后点「自检并载入契约」'
+        : `服务未连接 (${lastConfigError || '无响应'}) —— 先启动记忆服务 (cd server && npm start)，连接后即可在此填写模型配置`;
       return;
     }
     const { config } = lastConfigView;
@@ -691,14 +699,19 @@ export function mountPanel({ api, metaStore, injector, extractor, summarizer, lo
     llmKey.placeholder = config.llm?.apiKeySet ? `已配置 (${config.llm.apiKey}) · 留空保持不变` : '未配置';
     embedKey.placeholder = config.embedding?.apiKeySet ? `已配置 (${config.embedding.apiKey}) · 留空保持不变` : '未配置';
     for (const id of ids) document.getElementById(id).disabled = false;
-    document.getElementById('tm_cfg_save').disabled = false;
+    save.disabled = false;
+    if (!/已保存并生效/.test(status.textContent)) {
+      status.textContent = '密钥留空 = 保持已存值不变；保存后立即生效，无需重启服务';
+    }
   }
 
   async function loadConfigView() {
     try {
       lastConfigView = await api.getConfig();
-    } catch {
+      lastConfigError = '';
+    } catch (err) {
       lastConfigView = null;           // 服务不可达/旧版本服务无此端点 => 表单禁用
+      lastConfigError = err.message ?? String(err);
     }
     renderConfigForm();
   }
