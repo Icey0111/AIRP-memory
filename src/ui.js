@@ -37,6 +37,7 @@ const FIELDS = [
   // 注入形态: 纯前端偏好, 语义 (列名/上限/预算) 一律由 meta.injectionTables 下发
   { sel: '#tm_inject_tables', key: 'injectTables', type: 'bool' },
   { sel: '#tm_inject_stances', key: 'injectStancesSection', type: 'bool' },
+  { sel: '#tm_inject_pending', key: 'injectPendingSection', type: 'bool' },
 
   { sel: '#tm_auto_write', key: 'autoWriteEnabled', type: 'bool' },
   { sel: '#tm_auto_every', key: 'autoWriteEveryNMessages', type: 'int' },
@@ -314,6 +315,7 @@ export function mountPanel({ metaStore, injector, extractor, summarizer, log, bu
           d.stanceCount !== undefined ? `立场 ${esc(d.stanceCount)}` : null,
           d.entityCount !== undefined ? `实体 ${esc(d.entityCount)}` : null,
           d.timelineCount !== undefined ? `时间线 ${esc(d.timelineCount)}` : null,
+          d.pendingCount !== undefined ? `待兑现 ${esc(d.pendingCount)}` : null,
           `记忆 ${esc(d.hitCount)}`,
           `细节 ${esc(d.chunkHitCount)}`,
         ].filter(Boolean).join(' · ');
@@ -323,6 +325,12 @@ export function mountPanel({ metaStore, injector, extractor, summarizer, log, bu
         parts.push(`<div class="tm-muted">前情提要 ${esc(d.digestCount ?? 0)}/${esc(d.digestTotal ?? 0)} 条`
           + `（约 ${esc(d.digestTokens ?? 0)} token，独立预算 ${esc(d.digestMaxTokens ?? '?')}）`
           + `${d.digestTruncated ? ` · 已丢掉最早 ${esc(d.digestDropped ?? 0)} 条` : ''}</div>`);
+        // 待兑现 (独立预算): 只在服务端报了该字段时显示, 不硬编码 0
+        if (d.pendingTotal !== undefined) {
+          parts.push(`<div class="tm-muted">未决命题 ${esc(d.pendingCount ?? 0)}/${esc(d.pendingTotal ?? 0)} 条`
+            + `（约 ${esc(d.pendingTokens ?? 0)} token，独立预算）`
+            + `${d.pendingTotal > (d.pendingCount ?? 0) ? ` · 已丢掉最早 ${esc(d.pendingDropped ?? 0)} 条` : ''}</div>`);
+        }
         parts.push(`<div class="tm-muted">query: ${esc(String(o.query ?? '').slice(0, 120))}</div>`);
       } else if (o.error) {
         parts.push(`<div><b>注入</b> <span class="tm-blocked">失败</span>：${esc(o.error)}（本轮不注入，对话不受影响）</div>`);

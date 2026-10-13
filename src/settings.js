@@ -44,6 +44,7 @@ export const DEFAULT_SETTINGS = {
   // 表格的列名/行数上限/预算/阈值一律由 /api/meta 的 injectionTables 下发, 前端不复制。
   injectTables: true,            // 表格化注入 (画像/立场/关键实体/时间线/检索行)
   injectStancesSection: true,    // 「关系立场」常驻段 (角色之间的关系与态度)
+  injectPendingSection: true,    // 未决命题段 (承诺/约定/威胁/悬而未决的线索)
 
   // ---- 写入 ----
   autoWriteEnabled: false,

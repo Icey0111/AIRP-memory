@@ -92,12 +92,12 @@ say(collapseKeys.length > 0 && badCollapse.length === 0,
 // ---------- 注入形态: 两个开关键必须在面板上, 且前端不得硬编码服务端的表格语义 ----------
 // 表格的段落标题/列名只在 server/src/domain/constants.js 定义一次, 前端一律读 meta.injectionTables。
 // 一旦有人图省事把服务端的表头/列名抄进前端, 这里立刻报错 —— 否则"语义同源"会悄悄破功。
-say(htmlIds.has('tm_inject_tables') && htmlIds.has('tm_inject_stances'),
-  '注入形态的两个开关在面板上存在 (#tm_inject_tables / #tm_inject_stances)');
+say(htmlIds.has('tm_inject_tables') && htmlIds.has('tm_inject_stances') && htmlIds.has('tm_inject_pending'),
+  '注入形态的三个开关在面板上存在 (#tm_inject_tables / #tm_inject_stances / #tm_inject_pending)');
 
 const FORBIDDEN_LITERALS = [
   '【角色画像】', '【关系立场】', '【关键实体】', '【前情提要】',
-  '【事件时间线】', '【相关记忆】', '【相关细节】',
+  '【事件时间线】', '【待兑现】', '【相关记忆】', '【相关细节】',
   '持方', '因果标注', '表露', '速写', '时间节点',
 ];
 const frontFiles = ['settings.html', 'src/ui.js', 'src/settings.js', 'src/injector.js'];

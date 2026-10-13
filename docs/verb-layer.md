@@ -338,6 +338,7 @@ PRAGMA foreign_keys = ON;
 | `src/services/retrievalService.js` | 接入【待兑现】段（独立预算）+ 上报 `pendingCount/pendingTokens/propositionRows` | ✅ 已完成 |
 | `src/services/graphService.js` | `chatTimeline` 收已定局声称、排除子实例、密度筛；新增 `chatPending()` | ✅ 已完成 |
 | `src/services/*` | 事实层查询改读 `v_facts`（关键实体度数、事件簇） | ✅ 已完成 |
+| 前端 | 「未决命题段」开关（`injectPendingSection`）+ 预览里的待兑现统计 | ✅ 已完成 |
 | `docs/api.md` / `docs/injection-tables.md` | 版本号与冻结说明同步 | ✅ 已完成 |
 
 **迁移前必须备份 db 文件**（重建边表虽然简单，但没有回滚路径）。回滚方案：恢复备份文件。
@@ -497,7 +498,7 @@ export const VERB_LAYER = {
 | **V6-2 ✅** | prompt 重写（述谓实例 + 题元 + 来源） + `constants.js: VERB_LAYER` + `/api/meta` 下发 + `verbs.smoke.js` | ✅ 已完成：归属命题与从句进 `v_propositions`、**不写一阶记忆**（FTS 不被未证实内容污染）；从句/条件前件**继承宿主来源**（实测补上：否则意图会被写成事实）；嵌套深度上限生效（第 3 层丢弃并计数）；归并触发权收窄为叙述者（`mergeAliases:false` 兜底）；`linkRelations` 与 schema CHECK 完全一致；`npm test` **12 套全绿** |
 | **V6-3 ✅** | 事实层改读 `v_facts`（时间线 + 关键实体度数 + 状态过滤）+ 对齐算法 + `propositions.smoke.js` | ✅ 已完成：五个出口全测（兑现/推翻/落空/未激活/作废）；三条防过度对齐规则（无题元不判、重叠不足不判、**有未决从句者不参与匹配**）；从句级联到宿主（**谎话被拆穿 / 陈述被证实**）；择一改为**竞争**（打分最高者胜出，其余作废）；幂等；跨聊天隔离；时间线不含归属命题与未决行；`npm test` **13 套全绿** |
 | **V6-4 ✅** | 注入渲染（时间线内联来源 + 【待兑现】段 + 密度控制） | ✅ 已完成：归属声称以「持有者+情态：从句内容（定局标记）」渲染；未决/未发生均不进时间线；子实例不成独立行；【待兑现】独立预算、空段不出、保新丢旧；密度筛（状态变化/在边上/是声称/importance 达标）；`npm test` **13 套全绿** + check-contract |
-| **V6-5** | 前端（若需展示待兑现清单）+ `check-static` 字面量约束 + 文档收尾 | `check-static` / `check-contract` 绿 |
+| **V6-5 ✅** | 前端（未决段开关 + 统计展示）+ `check-static` 字面量约束 + 文档收尾 | ✅ 已完成：面板新增「未决命题段」开关（对称于立场段开关，经 HTTP 生效）；检索预览新增待兑现条数/预算行；`check-static` 把`【待兑现】` 纳入禁止硬编码字面量 + 断言三个开关存在；`docs/api.md` 与 README 同步 |
 
 ---
 

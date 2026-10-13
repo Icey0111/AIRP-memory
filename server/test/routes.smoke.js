@@ -128,6 +128,17 @@ check('injectStances=false -> 只关立场段, 表格化仍开',
   ctxNoStance.body.stancesEnabled === false && ctxNoStance.body.tablesEnabled === true,
   JSON.stringify({ t: ctxNoStance.body.tablesEnabled, s: ctxNoStance.body.stancesEnabled }));
 
+// 未决命题开关同样经 HTTP 生效 (缺省开)
+const ctxPendingOff = await req('POST', '/api/context', {
+  query: 'ELARA', chatId: 'chat001', injectPending: false,
+});
+check('injectPending=false -> 未决段不注入 (pendingEnabled=false, 段文本缺席)',
+  ctxPendingOff.body.pendingEnabled === false && ctxPendingOff.body.pendingCount === 0
+  && !String(ctxPendingOff.body.text ?? '').includes('【待兑现】'),
+  JSON.stringify({ on: ctxPendingOff.body.pendingEnabled, n: ctxPendingOff.body.pendingCount }));
+check('缺省时未决段启用 (pendingEnabled=true)',
+  ctxDefault.body.pendingEnabled === true, String(ctxDefault.body.pendingEnabled));
+
 const retrDefault = await req('POST', '/api/retrieve', { query: 'ELARA', chatId: 'chat001' });
 check('POST /api/retrieve hits 受 config.topK 约束 (=2)',
   retrDefault.body.hits.length === 2, `实际 ${retrDefault.body.hits.length}`);

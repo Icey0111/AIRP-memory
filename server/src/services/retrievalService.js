@@ -136,6 +136,7 @@ export async function assembleContext(db, embed, {
   digestMaxTokens = null,
   injectTables = null,
   injectStances = null,
+  injectPending = null,
 }) {
   const tablesOn = injectTables === false ? false : INJECTION_TABLES.enabled;
   const stancesOn = tablesOn && injectStances !== false;
@@ -256,7 +257,8 @@ export async function assembleContext(db, embed, {
   //    这批信息原先只存在于摘要的自由文本里 (无法核对/标记/统计); 结构化后单独成段,
   //    与时间线不重叠 —— 未决的只看前景, 已定局的才进时间线。
   let pendingCount = 0; let pendingTotal = 0; let pendingTokens = 0; let pendingDropped = 0;
-  const pending = chatId
+  const pendingOn = injectPending !== false;
+  const pending = (chatId && pendingOn)
     ? buildPendingSection(db, { chatId })
     : { text: '', count: 0, total: 0, tokens: 0, dropped: 0 };
   pendingCount = pending.count;
@@ -388,6 +390,8 @@ export async function assembleContext(db, embed, {
     pendingTotal,
     pendingTokens,
     pendingDropped,
+    /** 未决段是否启用 (前端据 meta 与自身偏好关掉时为 false) */
+    pendingEnabled: pendingOn,
     tablesEnabled: tablesOn,
     stancesEnabled: stancesOn,
     // tables: 全部表格化 | bullets: 全回退 | mixed: 部分段回退

@@ -192,7 +192,7 @@ export function createRouter(db, { llm = null, embed = null, retrieval = {}, run
   }));
 
   router.post('/api/context', handleAsync(async (req, res) => {
-    const { query, chatId, characterId, topK, tokenBudget, digestMaxTokens, injectTables, injectStances } = req.body ?? {};
+    const { query, chatId, characterId, topK, tokenBudget, digestMaxTokens, injectTables, injectStances, injectPending } = req.body ?? {};
     res.json({
       ok: true,
       ...(await assembleContext(db, embedIfUsable, {
@@ -201,9 +201,10 @@ export function createRouter(db, { llm = null, embed = null, retrieval = {}, run
         tokenBudget: Number(tokenBudget) || defaultTokenBudget,
         // 0 / 缺省 = 用服务端策略默认值 (与 topK / tokenBudget 同一约定)
         digestMaxTokens: Number(digestMaxTokens) > 0 ? Number(digestMaxTokens) : null,
-        // 表格化总开关与立场段开关: 缺省 = 用服务端默认 (INJECTION_TABLES.enabled), 显式 false 才关
+        // 表格化总开关与立场/未决段开关: 缺省 = 用服务端默认, 显式 false 才关
         injectTables: injectTables === false ? false : null,
         injectStances: injectStances === false ? false : null,
+        injectPending: injectPending === false ? false : null,
       })),
     });
   }));

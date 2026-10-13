@@ -185,42 +185,55 @@ upsert 语义：同 (category, key) 覆盖。
 
 ```json
 { "query": "最近发生了什么", "chatId": "chat001", "characterId": "艾拉",
-  "topK": 8, "tokenBudget": 1200, "digestMaxTokens": 2000 }
+  "topK": 8, "tokenBudget": 1200, "digestMaxTokens": 2000,
+  "injectTables": true, "injectStances": true, "injectPending": true }
 ```
 
 ```json
 {
   "ok": true,
-  "text": "【角色画像】\n- [personality] 行事风格: ...\n\n【前情提要】\n[24-35] ...\n[36-47] ...\n\n【相关记忆】\n- (event, 第三夜) ...\n\n【相关细节】\n- [appearance] ...",
+  "text": "【角色画像】\n…\n\n【关键实体】\n…\n\n【事件时间线】\n…\n\n【待兑现】\n- 信使说：带主角去北门（未决 · 第九夜）\n\n【相关记忆】\n…",
+  "injectionMode": "tables",
   "usedTokens": 412, "tokenBudget": 1200,
-  "profileCount": 2, "hitCount": 3, "hitIds": [5, 9, 2],
-  "chunkHitCount": 2, "chunkHitIds": [3, 7],
+  "profileCount": 2, "stanceCount": 3, "entityCount": 5,
+  "timelineCount": 8, "propositionRows": 1,
+  "pendingCount": 1, "pendingTotal": 2, "pendingTokens": 40, "pendingDropped": 1, "pendingEnabled": true,
+  "hitCount": 3, "hitIds": [5, 9, 2], "chunkHitCount": 2, "chunkHitIds": [3, 7],
   "digestCount": 4, "digestTotal": 6, "digestTokens": 1180, "digestMaxTokens": 2000,
-  "digestDropped": 2, "digestTruncated": true, "digestIds": [41, 44, 47, 50],
-  "digestFromFloor": 24, "digestToFloor": 71
+  "digestDropped": 2, "digestTruncated": true
 }
 ```
 
-`text` 直接拼进 prompt 即可。四段顺序固定（与 `meta.contextSections` 同源）：
+`text` 直接拼进 prompt 即可。段落顺序与 `meta.contextSections` 同源（V6 起为 8 段）：
 
-| # | 段 | 填充方式 |
-|---|---|---|
-| 1 | 角色画像 | 常驻，最先放 |
-| 2 | **前情提要** | 常驻，按楼层顺序拼接的摘要链 |
-| 3 | 相关记忆 | FTS 召回，**已排除摘要**，按打分填 `tokenBudget` |
-| 4 | 相关细节 | 向量召回的观察块，填剩余 `tokenBudget` |
+| # | 段 | 填充方式 | 预算 |
+|---|---|---|---|
+| 1 | 角色画像 | 常驻（表格） | 自有 |
+| 2 | 关系立场 | 常驻（表格，可关） | 自有 |
+| 3 | 关键实体 | 常驻限量（表格） | 自有 |
+| 4 | 前情提要 | 常驻，按楼层顺序拼接的摘要链 | `digestMaxTokens` |
+| 5 | 事件时间线 | 常驻限量；**归属声称带来源口吻与定局标记**（`信使说：…（已被拆穿）`） | 自有 |
+| 6 | **待兑现** | 常驻限量；未决命题（承诺/约定/威胁/线索），**空则不出段**，可关 | 自有 |
+| 7 | 相关记忆 | FTS 召回，**已排除摘要**，按打分填 `tokenBudget` | `tokenBudget` |
+| 8 | 相关细节 | 向量召回的观察块，填剩余 `tokenBudget` | 同上 |
 
-**两个预算是分开的**：`usedTokens / tokenBudget` 只表示第 3、4 段（检索段）的用量；【前情提要】走自己的 `digestMaxTokens`（默认见 `summaryPolicy.digest.maxTokens`，请求体可覆盖，传 0 = 用默认）。
+**预算是分开的**：`usedTokens / tokenBudget` 只表示第 7、8 段（检索段）的用量；各常驻段走自己的预算（见 `meta.injectionTables.budgets`），互不挤占。
 
-分开的理由：摘要是被隐藏剧情的唯一载体，如果和"当前更像"的记忆抢同一个预算，它会被挤掉 —— 而被挤掉的那一刻，那段剧情在模型眼里就凭空消失了。
+分开的理由：常驻段承载的是"必然在场"的信息（角色是谁、关系怎样、发生了什么、还欠着什么），一旦与"当前更像"的记忆抢同一个预算，它们会被挤掉 —— 而被挤掉的那一刻，那段信息在模型眼里就凭空消失了。
+
+V6 新增的两条注入口径（`meta.verbLayer` 下发）：
+
+- **时间线只收已发生的**：归属声称在**已定局**（已证实 / 已被拆穿）时内联进时间线并带来源口吻；**未决**的进【待兑现】；**未发生**的（落空/未激活/作废）两边都不进。
+- **子实例不成独立行**：从句/条件前件/择一候选的内容由宿主行承载（否则「她说：X」与 X 会各占一行）。
 
 > 为什么摘要不走相似度、预算不足时为什么"保新丢旧"，见 [summarization.md](./summarization.md) 第 5 节。
 
 ---
 
-## 6. 二阶六要素抽取 `/api/extract`
+## 6. 述谓实例抽取 `/api/extract`（V6 起）
 
-对话文本 → 人物/地点/时间点/事件/因果边，幂等（同 chat 同标题事件不重复落库）。
+对话文本 → **述谓实例**（谁—动词—谁 + 来源/时态/极性）/ 人物 / 地点 / 时间点 / 因果与条件边。
+幂等（同 chat 同 `label` 的实例不重复落库；无 label 的实例不去重 —— 两条从句可能同为「去」）。
 
 ```json
 { "chatId": "chat001", "text": "<若干层对话原文>", "sourceMessageIds": ["m30","m31"], "writeMemory": true }
@@ -232,14 +245,25 @@ upsert 语义：同 (category, key) 覆盖。
   "people": [ { "id": 1, "name": "艾拉", "existed": true, "...": "..." } ],
   "locations": [ { "id": 1, "name": "夜莺酒馆", "...": "..." } ],
   "timePoint": { "id": 3, "label": "第三夜, 暴雨", "seq": 3 },
-  "events": [ { "id": 2, "title": "同行启程", "existed": false } ],
+  "instances": [ { "id": 2, "title": "同行启程", "verbType": "去", "sourceType": "narrator", "existed": false } ],
   "links": [ { "from": "酒馆初遇", "to": "同行启程", "relation": "caused" } ],
   "memoryIds": [11, 12],
+  "skipped": 0,
+  "aligned": { "realized": [], "refuted": [], "hostRealized": [], "hostRefuted": [], "inactive": [], "failed": [], "voided": [] },
   "extracted": { "...": "LLM 原始 JSON" }
 }
 ```
 
-`writeMemory=false` 时只建图不写一阶事件记忆。别名自动归并（"精灵游侠"→"艾拉"）。
+三条与旧版不同的语义（详见 `docs/verb-layer.md`）：
+
+| 规则 | 说明 |
+|---|---|
+| **来源** | `source_type='narrator'` 进事实层（`v_facts`）；`'attributed'`（人物说的/想的）进命题层（`v_propositions`），状态未决 |
+| **从句/条件前件继承宿主来源** | 「艾拉说[她明天去镇上]」里的从句也是归属内容，**不会**被写成事实 |
+| **归并触发权** | 只有叙述者断言可触发实体别名归并；人物层的「X 是 Y」落为命题（写入时用 `mergeAliases:false` 兜底） |
+
+`writeMemory=false` 时只建图不写一阶事件记忆；归属命题**从不**写一阶记忆（不污染 FTS 检索）。
+落库后自动跑一轮对齐（命题 ↔ 事实），失败只记 warn，不影响抽取结果。
 
 ---
 

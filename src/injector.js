@@ -46,6 +46,7 @@ export function createInjector({ api, metaStore, getSettings, log, bus = null })
     // 注入形态: 用户偏好显式下发; 关掉即走服务端的 bullet 回退路径 (无损, 不改任何数据)
     payload.injectTables = s.injectTables !== false;
     payload.injectStances = s.injectStancesSection !== false;
+    payload.injectPending = s.injectPendingSection !== false;
     return payload;
   }
 
