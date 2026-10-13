@@ -30,6 +30,7 @@ const FIELDS = [
   { sel: '#tm_inject_role', key: 'injectRole', type: 'str' },
   { sel: '#tm_topk', key: 'retrievalTopK', type: 'int' },
   { sel: '#tm_token_budget', key: 'retrievalTokenBudget', type: 'int' },
+  { sel: '#tm_digest_tokens', key: 'digestMaxTokens', type: 'int' },
   { sel: '#tm_query_messages', key: 'queryMessages', type: 'int' },
   { sel: '#tm_query_max_chars', key: 'queryMaxChars', type: 'int' },
 
@@ -261,6 +262,9 @@ export function mountPanel({ metaStore, injector, extractor, summarizer, log, bu
       ['注入顺序', (m.contextSections ?? []).length
         ? m.contextSections.map((x) => `${esc(x.order)}. ${esc(x.label)}（${esc(x.description)}）`).join(' → ')
         : '未声明'],
+      ['前情提要', `${esc(m.digestFormat?.header ?? '未声明')}`
+        + `${m.digestFormat?.line ? ` <span class="tm-mono">${esc(m.digestFormat.line)}</span>` : ''}`
+        + ` —— ${esc(rules.summaryDigest ?? '未声明')}`],
       ['可见性', esc(rules.visibility ?? '未声明')],
       ['当前生效口径', esc(rules.currentFilter ?? '未声明')],
       ['软删除', esc(rules.softDelete ?? '未声明')],
@@ -294,8 +298,11 @@ export function mountPanel({ metaStore, injector, extractor, summarizer, log, bu
       const time = new Date(o.at ?? Date.now()).toLocaleTimeString();
       if (o.data) {
         const d = o.data;
-        parts.push(`<div><b>注入</b> ${esc(time)} · 用 ${esc(d.usedTokens)}/${esc(d.tokenBudget)} token · `
+        parts.push(`<div><b>注入</b> ${esc(time)} · 检索段 ${esc(d.usedTokens)}/${esc(d.tokenBudget)} token · `
           + `画像 ${esc(d.profileCount)} 条 · 记忆命中 ${esc(d.hitCount)} 条 · 细节命中 ${esc(d.chunkHitCount)} 条</div>`);
+        parts.push(`<div class="tm-muted">前情提要 ${esc(d.digestCount ?? 0)}/${esc(d.digestTotal ?? 0)} 条`
+          + `（约 ${esc(d.digestTokens ?? 0)} token，独立预算 ${esc(d.digestMaxTokens ?? '?')}）`
+          + `${d.digestTruncated ? ` · 已丢掉最早 ${esc(d.digestDropped ?? 0)} 条` : ''}</div>`);
         parts.push(`<div class="tm-muted">query: ${esc(String(o.query ?? '').slice(0, 120))}</div>`);
       } else if (o.error) {
         parts.push(`<div><b>注入</b> <span class="tm-blocked">失败</span>：${esc(o.error)}（本轮不注入，对话不受影响）</div>`);
@@ -354,15 +361,26 @@ export function mountPanel({ metaStore, injector, extractor, summarizer, log, bu
       <td>${esc(h.content)}</td>
     </tr>`).join('');
 
+    const dg = retrieve?.digest;
+    const digestBlock = (dg && dg.count)
+      ? `<div class="tm-subsection-title">前情提要（常驻 · 不参与打分）</div>
+        <div class="tm-muted">${esc(dg.count)}/${esc(dg.total)} 条 · 约 ${esc(dg.tokens)} token · 独立预算 ${esc(dg.maxTokens)}`
+        + `${dg.truncated ? ` · 已丢掉最早 ${esc(dg.droppedCount)} 条` : ''}</div>
+        <pre class="tm-digest">${esc(dg.text)}</pre>`
+      : `<div class="tm-subsection-title">前情提要（常驻）</div>
+        <div class="tm-muted">本聊天暂无摘要 —— 总结一次后，这里就会出现按楼层顺序的前情提要链</div>`;
+
     el.innerHTML = `
       <div class="tm-muted">query: ${esc(query)}</div>
-      <div>注入文本 ${esc(context?.usedTokens)}/${esc(context?.tokenBudget)} token ·
-        画像 ${esc(context?.profileCount)} · 记忆 ${esc(context?.hitCount)} · 细节 ${esc(context?.chunkHitCount)}</div>
+      <div>检索段 ${esc(context?.usedTokens)}/${esc(context?.tokenBudget)} token ·
+        画像 ${esc(context?.profileCount)} · 记忆 ${esc(context?.hitCount)} · 细节 ${esc(context?.chunkHitCount)}
+        · 前情提要 ${esc(context?.digestCount ?? 0)} 条</div>
+      ${digestBlock}
       ${hitRows ? `<div class="tm-subsection-title">记忆命中（FTS）</div>
         <table class="tm-table"><thead><tr><th>类型</th><th>score</th><th>内容</th></tr></thead><tbody>${hitRows}</tbody></table>` : ''}
       ${chunkRows ? `<div class="tm-subsection-title">细节命中（向量）</div>
         <table class="tm-table"><thead><tr><th>维度</th><th>相似度</th><th>内容</th></tr></thead><tbody>${chunkRows}</tbody></table>` : ''}
-      ${!hitRows && !chunkRows ? '<div class="tm-muted">无命中</div>' : ''}`;
+      ${!hitRows && !chunkRows ? '<div class="tm-muted">相关记忆与细节均无命中</div>' : ''}`;
   }
 
   // ---------- 渲染: 默认值提示 (放到输入框占位里) ----------
@@ -377,9 +395,11 @@ export function mountPanel({ metaStore, injector, extractor, summarizer, log, bu
     }
     const topk = document.getElementById('tm_topk');
     const budget = document.getElementById('tm_token_budget');
+    const digest = document.getElementById('tm_digest_tokens');
     const trigger = document.getElementById('tm_summary_trigger');
     if (topk && d?.retrieval?.topK) topk.placeholder = `${d.retrieval.topK}（0=默认）`;
     if (budget && d?.retrieval?.tokenBudget) budget.placeholder = `${d.retrieval.tokenBudget}（0=默认）`;
+    if (digest && d?.summary?.digestMaxTokens) digest.placeholder = `${d.summary.digestMaxTokens}（0=默认）`;
     if (trigger && d?.summary?.triggerTokens) trigger.placeholder = `${d.summary.triggerTokens}（0=默认）`;
   }
 

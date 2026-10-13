@@ -120,9 +120,15 @@ export function lastMessageIndex() {
  * 跳过已隐藏 (is_system) 与空消息 —— 注意隐藏与"不算入累计"是同一件事:
  * 已总结并被隐藏的正文不会再被计入 token 累计, 否则会反复触发总结。
  *
+ * maxChars > 0 时是**严格前缀**: 一旦某条装不下就停, 不跳过它去装更靠后的消息。
+ * 这条约束是为"已总结边界"服务的 —— 只有文本与楼层是连续前缀,
+ * 边界才能精确落在一个真实被总结过的楼层上 (见 lastIncluded)。
+ *
  * @param {{fromIndex?:number, toIndex?:number, maxChars?:number}} [opts]
  *        toIndex = -1 表示取到最后; maxChars = 0 表示不限长
- * @returns {{text:string, sourceMessageIds:string[], messageCount:number, charCount:number, from:number, to:number}}
+ * @returns {{text:string, sourceMessageIds:string[], messageCount:number,
+ *            charCount:number, from:number, to:number, lastIncluded:number|null}}
+ *          lastIncluded = 实际进入 text 的最后一个楼层; 无内容时为 null
  */
 export function collectRange({ fromIndex = 0, toIndex = -1, maxChars = 0 } = {}) {
   const ctx = getContext();
@@ -136,17 +142,18 @@ export function collectRange({ fromIndex = 0, toIndex = -1, maxChars = 0 } = {})
 
   const picked = [];
   let charCount = 0;
-  let used = 0;
 
   for (let i = from; i <= to; i++) {
     const text = usableMessage(chat[i]);
     if (text === null) continue;
     const speaker = chat[i].is_user ? name1 : (chat[i].name || name2);
     const line = `${speaker}: ${text}`;
+    // 严格前缀: 装不下就停, 不跳过去装更靠后的消息。
+    // 否则"已总结区间"无法精确对应楼层, 边界会推进到没被总结的楼层上,
+    // 那些楼层的正文会被连带隐藏而永久丢失 (它们既没进摘要, 也不在 prompt 里了)。
+    if (maxChars > 0 && charCount + line.length > maxChars) break;
     charCount += line.length;
-    if (maxChars > 0 && used + line.length > maxChars) continue; // 统计仍计入, 但不塞进文本
     picked.push({ index: i, line });
-    used += line.length;
   }
 
   return {
@@ -156,6 +163,7 @@ export function collectRange({ fromIndex = 0, toIndex = -1, maxChars = 0 } = {})
     charCount,
     from,
     to,
+    lastIncluded: picked.length ? picked[picked.length - 1].index : null,
   };
 }
 

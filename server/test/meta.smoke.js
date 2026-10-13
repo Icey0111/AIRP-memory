@@ -182,8 +182,10 @@ check('公式以文本形式下发 (前端原样展示, 不自己拼)',
   && typeof meta.scoring.forget.formula === 'string');
 check('生效规则文案齐备', ['visibility', 'softDelete', 'supersede', 'stanceEvolution', 'entityIdDuality']
   .every((k) => typeof meta.rules[k] === 'string' && meta.rules[k].length > 0));
-check('注入段落顺序下发', meta.contextSections.length === 3
-  && meta.contextSections[0].key === 'profile' && meta.contextSections[2].key === 'chunks');
+check('注入段落顺序下发 (画像 → 前情提要 → 相关记忆 → 相关细节)',
+  meta.contextSections.length === 4
+  && meta.contextSections.map((s) => s.key).join(',') === 'profile,digest,memories,chunks',
+  JSON.stringify(meta.contextSections.map((s) => s.key)));
 
 // ============================================================
 // 4b) 总结策略: 触发阈值与 token 系数必须与常量同源
@@ -212,6 +214,24 @@ check('上下文规模预设随规模单调不减 (前端原样展示, 不自作
 check('保留条数不小于 0 且单批上限不低于触发阈值',
   SUMMARY_POLICY.keepRecentMessages >= 0
   && SUMMARY_POLICY.maxBatchTokens >= SUMMARY_POLICY.triggerTokens);
+
+// 前情提要段: 摘要必须"必然在场", 所以它的预算、筛选范围、段落形状都要下发给前端
+check('前情提要段预算下发且落在合法区间内',
+  Number.isFinite(meta.summaryPolicy.digest?.maxTokens)
+  && meta.summaryPolicy.digest.maxTokens >= meta.summaryPolicy.digest.limits.min
+  && meta.summaryPolicy.digest.maxTokens <= meta.summaryPolicy.digest.limits.max,
+  JSON.stringify(meta.summaryPolicy.digest));
+check('前情提要只取本聊天 (scope=chat, 不跨聊天拼链)',
+  meta.summaryPolicy.digest.scope === 'chat');
+check('defaults.summary.digestMaxTokens 与策略同源',
+  meta.defaults.summary.digestMaxTokens === meta.summaryPolicy.digest.maxTokens,
+  `defaults=${meta.defaults.summary.digestMaxTokens} policy=${meta.summaryPolicy.digest.maxTokens}`);
+check('前情提要段落形状下发 (前端只展示不解析)',
+  typeof meta.digestFormat?.header === 'string' && meta.digestFormat.header.length > 0
+  && typeof meta.digestFormat.line === 'string' && meta.digestFormat.line.includes('{content}'),
+  JSON.stringify(meta.digestFormat));
+check('"摘要不参与相似度召回" 这条规则有文案 (与检索的 excludeTypes 同源)',
+  typeof meta.rules.summaryDigest === 'string' && meta.rules.summaryDigest.length > 0);
 
 // ============================================================
 // 5) 能力标记随运行时变化

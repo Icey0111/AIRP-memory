@@ -29,6 +29,12 @@ export const MEMORY_SCOPES = [
 export const MEMORY_TYPE_VALUES = MEMORY_TYPES.map((t) => t.value);
 export const MEMORY_SCOPE_VALUES = MEMORY_SCOPES.map((s) => s.value);
 
+/**
+ * 摘要记忆的类型值。摘要层多处引用 (注入时从相似度召回中排除、前情提要筛选、遗忘保护),
+ * 定义一次以免各写各的字面量。必须与 MEMORY_TYPES 里的 'summary' 一致。
+ */
+export const SUMMARY_MEMORY_TYPE = 'summary';
+
 /** 一阶记忆默认值 (createMemory 的缺省参数) */
 export const MEMORY_DEFAULTS = {
   scope: 'chat',
@@ -112,11 +118,17 @@ export const TOKEN_ESTIMATION = {
   description: '中英混合的保守估算, 不是真实分词; 前端累计与后端预算使用同一口径',
 };
 
-/** 注入组装的段落填充顺序 */
+/**
+ * 注入组装的段落填充顺序。
+ * 前两段是"常驻"的: 不参与相似度打分, 也不会被检索预算挤掉 ——
+ *   画像回答"角色是谁", 前情提要回答"到现在为止发生了什么"。
+ * 后两段是"按需"的: 与当前轮 query 相关的记忆与细节, 按打分填预算。
+ */
 export const CONTEXT_SECTIONS = [
   { order: 1, key: 'profile', label: '角色画像', description: '常驻保底, 预算外优先保证' },
-  { order: 2, key: 'memories', label: '相关记忆', description: 'FTS 召回, 按打分顺序填预算' },
-  { order: 3, key: 'chunks', label: '相关细节', description: '向量召回的观察块' },
+  { order: 2, key: 'digest', label: '前情提要', description: '按楼层顺序拼接的摘要链, 常驻且不参与相似度打分' },
+  { order: 3, key: 'memories', label: '相关记忆', description: 'FTS 召回 (已排除摘要), 按打分顺序填预算' },
+  { order: 4, key: 'chunks', label: '相关细节', description: '向量召回的观察块' },
 ];
 
 // ============================================================
@@ -158,6 +170,30 @@ export const SUMMARY_POLICY = {
    * 保留几条的理由: 模型对上下文末尾最敏感, 逐字保留最近几轮能显著降低答非所问。
    */
   keepRecentMessages: 6,
+
+  /**
+   * 【前情提要】段: 已生成的摘要如何随对话一起送进 prompt。
+   *
+   * 为什么摘要不能走相似度召回 (关键设计):
+   *   摘要覆盖的正文已被 /hide 移出 prompt, 摘要是那段剧情唯一的载体。
+   *   若摘要仍按 FTS 取 top-k, 当前轮关键词不命中就会整条不进 prompt,
+   *   被隐藏的区间在模型眼里就成了空洞 —— 而且这是系统性偏向漏:
+   *   摘要长、关键词稀疏, 在 bm25 里天然吃亏, 而相关性恰好占打分权重的 0.6。
+   *   因此摘要改为"按楼层顺序拼接、必然在场"的独立段落, 不参与打分。
+   */
+  digest: {
+    /** 该段的 token 预算 (独立于检索 tokenBudget, 不与相关记忆互相挤占) */
+    maxTokens: 2000,
+    /** 只取本聊天的摘要 (scope='chat' 且 chat_id 匹配), 不跨聊天拼链 */
+    scope: 'chat',
+    /** 面板输入的合法区间 (0 在协议里表示"用服务端默认值") */
+    limits: { min: 1, max: 8000 },
+    rationale:
+      '与可见窗口相接的最近摘要最关键 (决定"刚才发生了什么"), 所以预算不足时优先保新、丢最早; '
+      + '早期剧情里的稳定设定通常已沉淀到角色画像与 fact 记忆, 不会因为丢掉最早一条摘要而消失。'
+      + '按默认 maxSummaryChars=800 与 triggerTokens=6000 的口径, 2000 token 约容纳 5 条摘要、'
+      + '约覆盖 150 层原文。',
+  },
   /** 触发方式标识 (目前只有一种; 前端据此选择累计逻辑) */
   trigger: 'estimated-tokens',
 
@@ -178,6 +214,18 @@ export const SUMMARY_POLICY = {
 
   /** 阈值合法区间 (前端输入框钳制用; 也是后端接受的边界) */
   limits: { min: 1000, max: 20000 },
+};
+
+/**
+ * 【前情提要】段的文本形状。服务端据此组装, 前端只展示不解析。
+ * 每条摘要行首带它覆盖的楼层区间, 让模型知道这段剧情发生在多早之前。
+ * 改这里即同时改变两端呈现, 不会出现"文档一种写法、代码另一种写法"。
+ */
+export const DIGEST_FORMAT = {
+  header: '【前情提要】',
+  /** 每行的模板; {from}/{to} 为该摘要覆盖的楼层区间, {content} 为摘要正文 */
+  line: '[{from}-{to}] {content}',
+  description: '按楼层顺序拼接的摘要链; 行首 [起-止] 为覆盖的楼层区间',
 };
 
 // ============================================================
@@ -226,6 +274,9 @@ export const RULES = {
     '两套 id 体系: character_profiles.character_id 是角色卡名字符串; '
     + 'attribute_chunks.entity_id / stances.holder_id 是 people/orgs 表的整数 id。不可混用。',
   forgetRestoreScope: 'restore 仅作用于被遗忘 (is_active=0) 的条目, 对未遗忘条目返回 404。',
+  summaryDigest:
+    "摘要 (type='summary') 不参与相似度召回, 只以【前情提要】段按楼层顺序常驻注入; "
+    + '它覆盖的正文已由 /hide 移出 prompt, 所以摘要必须必然在场 —— 否则那段剧情在模型眼里会变成空洞。',
 };
 
 // ============================================================

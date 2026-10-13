@@ -17,7 +17,8 @@ import { addStance, listStances, softDeleteStance, stanceOverview } from '../ser
 import { extractStances } from '../services/stanceExtractionService.js';
 import { summarizeConversation } from '../services/summaryService.js';
 import { runForgetTask, restoreForgotten } from '../services/forgetService.js';
-import { RETRIEVAL_FALLBACK_DEFAULTS, FORGET_SCORING } from '../domain/constants.js';
+import { buildDigest } from '../services/digestService.js';
+import { RETRIEVAL_FALLBACK_DEFAULTS, FORGET_SCORING, SUMMARY_MEMORY_TYPE } from '../domain/constants.js';
 import { buildMeta } from './meta.js';
 
 const CORE_TABLES = [
@@ -156,10 +157,15 @@ export function createRouter(db, { llm = null, embed = null, retrieval = {}, run
   const embedIfUsable = usable(embed) ? embed : null;
 
   router.post('/api/retrieve', handleAsync(async (req, res) => {
-    const { query, chatId, characterId, topK, withChunks } = req.body ?? {};
+    const { query, chatId, characterId, topK, withChunks, includeSummaries, digestMaxTokens } = req.body ?? {};
     const k = Number(topK) || defaultTopK;
-    const { hits, match } = searchMemories(db, { query, chatId, characterId, topK: k });
-    const out = { ok: true, match, hits };
+    // 与 /api/context 保持一致: 默认排除摘要 (它们走【前情提要】常驻), 只看这里是否真要原文
+    const { hits, match } = searchMemories(db, {
+      query, chatId, characterId, topK: k,
+      excludeTypes: includeSummaries === true ? null : [SUMMARY_MEMORY_TYPE],
+    });
+    // 前情提要与相似度召回是两条独立通道, 调试时也要能看到它实际会注入什么
+    const out = { ok: true, match, hits, digest: buildDigest(db, { chatId, maxTokens: digestMaxTokens }) };
     if (embedIfUsable && query && withChunks !== false) {
       const { hits: chunkHits } = await searchChunks(db, embedIfUsable, { query, chatId, topK: k });
       out.chunkHits = chunkHits;
@@ -168,13 +174,15 @@ export function createRouter(db, { llm = null, embed = null, retrieval = {}, run
   }));
 
   router.post('/api/context', handleAsync(async (req, res) => {
-    const { query, chatId, characterId, topK, tokenBudget } = req.body ?? {};
+    const { query, chatId, characterId, topK, tokenBudget, digestMaxTokens } = req.body ?? {};
     res.json({
       ok: true,
       ...(await assembleContext(db, embedIfUsable, {
         query, chatId, characterId,
         topK: Number(topK) || defaultTopK,
         tokenBudget: Number(tokenBudget) || defaultTokenBudget,
+        // 0 / 缺省 = 用服务端策略默认值 (与 topK / tokenBudget 同一约定)
+        digestMaxTokens: Number(digestMaxTokens) > 0 ? Number(digestMaxTokens) : null,
       })),
     });
   }));

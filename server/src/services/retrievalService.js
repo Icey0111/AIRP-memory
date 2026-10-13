@@ -1,9 +1,10 @@
 // 检索闭环: FTS 召回 + 向量召回(观察块) -> 统一打分 -> top-k -> 注入组装
 // 打分权重/半衰期口径统一来自 domain/constants.js (与 GET /api/meta 同源)
 import { now, buildFtsQuery, estimateTokens } from '../utils/text.js';
-import { RETRIEVAL_SCORING, RETRIEVAL_FALLBACK_DEFAULTS } from '../domain/constants.js';
+import { RETRIEVAL_SCORING, RETRIEVAL_FALLBACK_DEFAULTS, SUMMARY_MEMORY_TYPE } from '../domain/constants.js';
 import { getProfile } from './profileService.js';
 import { searchChunksByVector, stripEmbedding } from './chunkService.js';
+import { buildDigest } from './digestService.js';
 
 const W_RELEVANCE = RETRIEVAL_SCORING.weights.relevance;
 const W_IMPORTANCE = RETRIEVAL_SCORING.weights.importance;
@@ -22,9 +23,24 @@ function recencyScore(tsSeconds) {
   return Math.exp((-ageDays * Math.LN2) / RECENCY_HALF_LIFE_DAYS);
 }
 
-export function searchMemories(db, { query, chatId = null, characterId = null, topK = RETRIEVAL_FALLBACK_DEFAULTS.topK }) {
+export function searchMemories(db, {
+  query, chatId = null, characterId = null,
+  topK = RETRIEVAL_FALLBACK_DEFAULTS.topK,
+  excludeTypes = null,
+}) {
   const match = buildFtsQuery(query);
   if (!match) return { hits: [], match: null };
+
+  // 注入时排除摘要: 摘要由【前情提要】常驻, 若仍参与 FTS 打分只会重复占位,
+  // 并把它自己的 token 花在"再次出现"上。
+  const excluded = Array.isArray(excludeTypes)
+    ? excludeTypes.filter((t) => typeof t === 'string' && t)
+    : [];
+  const typeClause = excluded.length
+    ? `AND m.type NOT IN (${excluded.map((_, i) => `@ex${i}`).join(', ')})`
+    : '';
+  const params = { match, characterId, chatId };
+  excluded.forEach((t, i) => { params[`ex${i}`] = t; });
 
   // bm25(虚表, 列权重...): content 权重 1.0, keywords 权重 2.0; 返回值越小越相关
   const rows = db.prepare(`
@@ -33,8 +49,9 @@ export function searchMemories(db, { query, chatId = null, characterId = null, t
     JOIN memories m ON m.id = memories_fts.rowid
     WHERE memories_fts MATCH @match
       AND m.is_active = 1
+      ${typeClause}
       AND ${VISIBILITY}
-  `).all({ match, characterId, chatId });
+  `).all(params);
 
   if (rows.length === 0) return { hits: [], match };
 
@@ -89,11 +106,12 @@ export async function searchChunks(db, embed, { query, chatId = null, topK = RET
   return { hits };
 }
 
-// 注入组装: 画像常驻 + 相关记忆(FTS) + 相关细节(向量观察块), 按 token 预算截断
+// 注入组装: 画像常驻 + 前情提要(摘要链常驻) + 相关记忆(FTS) + 相关细节(向量), 按 token 预算截断
 export async function assembleContext(db, embed, {
   query, chatId = null, characterId = null,
   topK = RETRIEVAL_FALLBACK_DEFAULTS.topK,
   tokenBudget = RETRIEVAL_FALLBACK_DEFAULTS.tokenBudget,
+  digestMaxTokens = null,
 }) {
   const sections = [];
   let usedTokens = 0;
@@ -111,9 +129,15 @@ export async function assembleContext(db, embed, {
     }
   }
 
-  // 2) FTS 召回的相关记忆 (按打分顺序填充, 预算内尽量多装)
+  // 2) 前情提要 (摘要链, 常驻)
+  //    走自己的预算, 不参与打分, 也不占检索预算 —— 否则长对话里摘要会被
+  //    "当前更像"的记忆挤掉, 而它覆盖的正文已被隐藏, 那段剧情就彻底没了。
+  const digest = buildDigest(db, { chatId, maxTokens: digestMaxTokens });
+  if (digest.text) sections.push(digest.text);
+
+  // 3) FTS 召回的相关记忆 (排除摘要: 摘要已由【前情提要】常驻, 再参与召回只会重复占位)
   const { hits } = query
-    ? searchMemories(db, { query, chatId, characterId, topK })
+    ? searchMemories(db, { query, chatId, characterId, topK, excludeTypes: [SUMMARY_MEMORY_TYPE] })
     : { hits: [] };
 
   const memoryLines = [];
@@ -128,7 +152,7 @@ export async function assembleContext(db, embed, {
     sections.push(`【相关记忆】\n${memoryLines.join('\n')}`);
   }
 
-  // 3) 向量召回的观察块 (模糊语义细节: 性格/外貌/氛围...)
+  // 4) 向量召回的观察块 (模糊语义细节: 性格/外貌/氛围...)
   const { hits: chunkHits } = await searchChunks(db, embed, { query, chatId, topK });
   const chunkLines = [];
   for (const h of chunkHits) {
@@ -144,9 +168,20 @@ export async function assembleContext(db, embed, {
 
   return {
     text: sections.join('\n\n'),
+    // usedTokens 只表示检索预算 (相关记忆 + 相关细节) 的用量
     usedTokens,
     tokenBudget,
     profileCount,
+    // 前情提要走独立预算, 单独上报, 免得前端把两个预算混在一起显示
+    digestCount: digest.count,
+    digestTotal: digest.total,
+    digestTokens: digest.tokens,
+    digestDropped: digest.droppedCount,
+    digestTruncated: digest.truncated,
+    digestIds: digest.ids,
+    digestMaxTokens: digest.maxTokens,
+    digestFromFloor: digest.fromFloor,
+    digestToFloor: digest.toFloor,
     hitCount: memoryLines.length,
     hitIds: hits.slice(0, memoryLines.length).map((h) => h.id),
     chunkHitCount: chunkLines.length,

@@ -167,30 +167,54 @@ upsert 语义：同 (category, key) 覆盖。
 {
   "ok": true, "match": "\"艾拉的性格\"",
   "hits":      [ { "id": 5, "type": "fact", "content": "...", "relevance": 1.0, "score": 0.94, "...": "..." } ],
-  "chunkHits": [ { "id": 3, "aspect": "personality", "content": "...", "similarity": 0.81, "score": 0.88, "...": "..." } ]
+  "chunkHits": [ { "id": 3, "aspect": "personality", "content": "...", "similarity": 0.81, "score": 0.88, "...": "..." } ],
+  "digest":    { "text": "【前情提要】\n[24-35] ...", "count": 4, "total": 6, "tokens": 1180,
+                 "maxTokens": 2000, "truncated": true, "droppedCount": 2,
+                 "ids": [41, 44, 47, 50], "fromFloor": 24, "toFloor": 71 }
 }
 ```
 
 打分框架统一：`score = 0.6·相关性 + 0.25·importance + 0.15·时间新近度`。
 `withChunks=false` 或未配置 embedding 时无 `chunkHits` 字段。
 
+**默认排除摘要记忆**（`type='summary'`）：摘要不在相似度召回里竞争，而是走【前情提要】常驻段（见下）。传 `includeSummaries: true` 才把它们放回 `hits`。
+
+`digest` 就是 `/api/context` 会注入的**同一份**摘要链 —— 调试时据此确认"被隐藏的剧情到底以什么形式还在场"。
+
 ### `POST /api/context` — 注入组装（**前端主入口**）
 
 ```json
-{ "query": "最近发生了什么", "chatId": "chat001", "characterId": "艾拉", "topK": 8, "tokenBudget": 1200 }
+{ "query": "最近发生了什么", "chatId": "chat001", "characterId": "艾拉",
+  "topK": 8, "tokenBudget": 1200, "digestMaxTokens": 2000 }
 ```
 
 ```json
 {
   "ok": true,
-  "text": "【角色画像】\n- [personality] 行事风格: ...\n\n【相关记忆】\n- (event, 第三夜) ...\n\n【相关细节】\n- [appearance] ...",
+  "text": "【角色画像】\n- [personality] 行事风格: ...\n\n【前情提要】\n[24-35] ...\n[36-47] ...\n\n【相关记忆】\n- (event, 第三夜) ...\n\n【相关细节】\n- [appearance] ...",
   "usedTokens": 412, "tokenBudget": 1200,
   "profileCount": 2, "hitCount": 3, "hitIds": [5, 9, 2],
-  "chunkHitCount": 2, "chunkHitIds": [3, 7]
+  "chunkHitCount": 2, "chunkHitIds": [3, 7],
+  "digestCount": 4, "digestTotal": 6, "digestTokens": 1180, "digestMaxTokens": 2000,
+  "digestDropped": 2, "digestTruncated": true, "digestIds": [41, 44, 47, 50],
+  "digestFromFloor": 24, "digestToFloor": 71
 }
 ```
 
-`text` 直接拼进 prompt 即可。三段按预算顺序填充：画像（常驻保底）→ FTS 记忆 → 向量细节。
+`text` 直接拼进 prompt 即可。四段顺序固定（与 `meta.contextSections` 同源）：
+
+| # | 段 | 填充方式 |
+|---|---|---|
+| 1 | 角色画像 | 常驻，最先放 |
+| 2 | **前情提要** | 常驻，按楼层顺序拼接的摘要链 |
+| 3 | 相关记忆 | FTS 召回，**已排除摘要**，按打分填 `tokenBudget` |
+| 4 | 相关细节 | 向量召回的观察块，填剩余 `tokenBudget` |
+
+**两个预算是分开的**：`usedTokens / tokenBudget` 只表示第 3、4 段（检索段）的用量；【前情提要】走自己的 `digestMaxTokens`（默认见 `summaryPolicy.digest.maxTokens`，请求体可覆盖，传 0 = 用默认）。
+
+分开的理由：摘要是被隐藏剧情的唯一载体，如果和"当前更像"的记忆抢同一个预算，它会被挤掉 —— 而被挤掉的那一刻，那段剧情在模型眼里就凭空消失了。
+
+> 为什么摘要不走相似度、预算不足时为什么"保新丢旧"，见 [summarization.md](./summarization.md) 第 5 节。
 
 ---
 
@@ -417,9 +441,10 @@ curl http://127.0.0.1:7780/api/meta
 | `defaults` | **生效**默认值：`retrieval`（受 config 影响）/ `memory` / `chunk` / `stance` / `forget` / `summary` |
 | `enums` | 枚举与标签，每项 `{ constrained, options:[{value,label,...}], note }` |
 | `scoring` | 打分口径：`retrieval` / `forget` / `tokenEstimation`，含 `formula` 原文 |
-| `summaryPolicy` | 长对话压缩策略：触发阈值/下限/单批上限/摘要长度上限/建议保留条数/理由/预设/合法区间 |
+| `summaryPolicy` | 长对话压缩策略：触发阈值/下限/单批上限/摘要长度上限/建议保留条数/**前情提要段配置 `digest`**/理由/预设/合法区间 |
 | `thresholds` | `supersedeSimilarity` / `similarityMetric` |
-| `contextSections` | 注入文本的段落顺序 |
+| `contextSections` | 注入文本的段落顺序（画像 → 前情提要 → 相关记忆 → 相关细节） |
+| `digestFormat` | 【前情提要】的段落形状：`header` 与每行模板 `line`（前端只展示、不解析） |
 | `rules` | 生效规则文案：可见性、当前生效口径、软删除、supersede、立场演化、两套 id 体系… |
 | `endpoints` | 端点清单，含 `needsLlm` / `needsEmbedding` / `degrade` / `degradeNote` |
 | `limits` | `auth` / `jsonBodyLimit` / `boundTo` 与安全提示 |
@@ -524,7 +549,9 @@ curl http://127.0.0.1:7780/api/meta
 
 把一段剧情压成**一条摘要记忆**（`memories.type = 'summary'`）。
 
-摘要**不是**另存一份结构 —— 它就是普通的一阶记忆，因此可见性（`scope`/`chat_id`）、软删除、FTS 检索、遗忘衰减全部沿用同一套规则；注入时和其它记忆一起参与打分。
+摘要**不是**另存一份结构 —— 它就是普通的一阶记忆，因此可见性（`scope`/`chat_id`）、软删除、FTS 检索、遗忘衰减全部沿用同一套规则。
+
+> **但注入时它不参与相似度打分。** 摘要覆盖的正文会被 `/hide` 移出 prompt，摘要是那段剧情唯一的载体；若按 FTS 取 top-k，当前轮关键词不命中就整段丢失（而且摘要长、关键词稀疏，在 bm25 里天然吃亏）。所以注入时摘要被**排除出相似度召回**，改由【前情提要】段按楼层顺序常驻 —— 见 §5 与 [summarization.md](./summarization.md) 第 5 节。
 
 > **何时调用由前端决定。** 服务端只负责"给一段文本，还一条摘要"。触发阈值、下限、单批上限、摘要长度上限都在 `GET /api/meta` 的 `summaryPolicy` 里下发，前端不另存一份。取值依据与调参建议见 [summarization.md](./summarization.md)。
 
@@ -584,6 +611,12 @@ curl -X POST http://127.0.0.1:7780/api/summarize \
   "defaultImportance": 0.6,
   "keepRecentMessages": 6,
   "trigger": "estimated-tokens",
+  "digest": {
+    "maxTokens": 2000,
+    "scope": "chat",
+    "limits": { "min": 1, "max": 8000 },
+    "rationale": "…为什么预算不足时保新丢旧…"
+  },
   "rationale": "…为什么取这个量级…",
   "presets": [{ "contextSize": 16384, "triggerTokens": 6000, "note": "默认量级, 兼顾粒度与安全" }],
   "limits": { "min": 1000, "max": 20000 }
@@ -591,3 +624,5 @@ curl -X POST http://127.0.0.1:7780/api/summarize \
 ```
 
 `scoring.tokenEstimation.charsPerToken` 是前端做模糊估算用的系数 —— **前端按它算，不写死 2**；`formula` 文本里的数字由同一个常量生成，不会出现"公式说 2、参数写 3"的分裂。
+
+`summaryPolicy.digest` 是【前情提要】段的配置：`maxTokens` 为该段的独立预算（前端"前情提要预算"输入框填 0 即用它），`scope` 固定为 `chat`（只拼本聊天的摘要链）。

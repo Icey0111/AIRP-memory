@@ -70,10 +70,10 @@ git clone https://github.com/Icey0111/AIRP-memory <SillyTavern>/public/scripts/e
 
 | 分组 | 做什么 |
 |---|---|
-| **注入** | 每轮生成前把相关记忆拼进 prompt（`/api/context`）。可设注入位置、深度、角色、topK、token 预算 |
+| **注入** | 每轮生成前把相关记忆拼进 prompt（`/api/context`）。可设注入位置、深度、角色、topK、token 预算、前情提要预算 |
 | **写入** | 把对话沉淀成记忆。默认**关闭**；开启后每 N 条角色消息自动跑一轮，也可随时手动触发 |
 | **总结** | 长对话压缩。累计估算 token 达阈值 → 压成一条摘要记忆 → 隐藏被覆盖的正文。默认**关闭** |
-| **手动** | 「立即抽取并写入」「检索预览」——后者能看到当前会注入哪几条、各自分数 |
+| **手动** | 「立即抽取并写入」「检索预览」——后者能看到实际会注入的【前情提要】整段，以及命中了哪几条记忆、各自分数 |
 | **诊断** | 重新拉契约、查看端点能力与最近一次运行状态 |
 
 面板按模块分组、可折叠（标题右侧带一行状态摘要），面板本体限高、超出部分内部滚动，不会把酒馆设置抽屉拉得很长；折叠状态会连同其他偏好一起记住。面板里的改动**即时持久化**（存进酒馆自己的设置文件，无需保存按钮），「重置前端设置」只重置扩展偏好、不动记忆数据。扩展**不保存任何密钥**——API Key 只存在于后端 `server/config.json`（已排除出版本库）。
@@ -91,6 +91,12 @@ git clone https://github.com/Icey0111/AIRP-memory <SillyTavern>/public/scripts/e
 把它压成一条 `type=summary` 的记忆，并把已被覆盖的正文用酒馆原生的 `/hide` 隐藏 ——
 隐藏只是移出 prompt，**不删除、随时可放回**。阈值、单批上限、摘要长度上限、保留条数全部由
 `/api/meta` 下发，前端不写死。取值依据见 [`docs/summarization.md`](docs/summarization.md)。
+
+注入进 prompt 的内容因此是四段：**角色画像 → 前情提要 → 相关记忆 → 相关细节**。
+第二段【前情提要】是按楼层顺序拼起来的摘要链 —— 它**不参与相似度检索**：正文既然已经被隐藏，
+摘要就是那段剧情唯一的载体，靠相似度去碰运气只会让它在关键词不命中时整段消失。
+它走独立预算（默认 2000 token），与检索预算互不挤占。详见
+[`docs/summarization.md` §5](docs/summarization.md)。
 
 ---
 
@@ -118,9 +124,9 @@ AIRP-memory/                  酒馆扩展本体（仓库根 = 扩展根）
 │
 ├── server/                   本地记忆服务（Node + Express + better-sqlite3）
 │   ├── src/api/              HTTP 层：routes / meta 契约端点 / cors
-│   ├── src/services/         业务层：写入、抽取、检索、画像、立场、总结、遗忘
+│   ├── src/services/         业务层：写入、抽取、检索、画像、立场、总结、前情提要、遗忘
 │   ├── src/domain/           constants.js —— 全项目唯一语义源
-│   ├── test/                 六套冒烟测试
+│   ├── test/                 七套冒烟测试
 │   └── config.default.json   配置模板
 │
 ├── db/                       表结构与迁移（schema.sql + migrations/001~004）
@@ -157,7 +163,7 @@ GET /api/meta                         ← 前后端唯一契约
 ## 开发校验
 
 ```bash
-# 后端（六套冒烟测试，用内存库，不污染本地数据）
+# 后端（七套冒烟测试，用内存库，不污染本地数据）
 cd server && npm test
 
 # 前端静态一致性：HTML 的 id ↔ JS 选择器 ↔ 默认设置字段是否对得上（不需要酒馆）
@@ -172,7 +178,7 @@ node check-contract.mjs [baseUrl]        # 默认 http://127.0.0.1:7780
 | 文档 | 内容 |
 |---|---|
 | [`docs/api.md`](docs/api.md) | HTTP 契约全量说明；§12 是 `GET /api/meta` 契约描述，§13 是 `POST /api/summarize` |
-| [`docs/summarization.md`](docs/summarization.md) | 长对话怎么总结：多少 token 一次、估算口径、隐藏正文的机制与取舍 |
+| [`docs/summarization.md`](docs/summarization.md) | 长对话怎么总结：多少 token 一次、估算口径、隐藏正文的机制与取舍、**摘要如何回到 prompt（【前情提要】, §5）** |
 | [`docs/frontend-v0.md`](docs/frontend-v0.md) | 扩展的安装、设置项、注入/写入/总结时序、id 口径 |
 | [`docs/database-design-v1.md`](docs/database-design-v1.md) ~ [`v4`](docs/database-design-v4.md) | 结构层设计演进（一阶记忆 → 六要素 → 属性向量 → 立场） |
 

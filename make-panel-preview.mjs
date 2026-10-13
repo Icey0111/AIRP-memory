@@ -106,6 +106,7 @@ ${html}
   $('tm_inject_role').value = 'system';
   $('tm_topk').value = '0';
   $('tm_token_budget').value = '0';
+  $('tm_digest_tokens').value = '0';
   $('tm_query_messages').value = '1';
   $('tm_query_max_chars').value = '500';
 
@@ -122,6 +123,7 @@ ${html}
   var defaultHints = {
     'retrieval.topK': 8,
     'retrieval.tokenBudget': 1200,
+    'summary.digestMaxTokens': 2000,
     'summary.triggerTokens': 6000
   };
   Array.prototype.forEach.call(document.querySelectorAll('[data-tm-default]'), function (el) {
@@ -167,12 +169,15 @@ ${html}
     '<div class="tm-muted">以下均为服务端 /api/meta 原文，前端不重写</div>'
     + '<dl class="tm-dl">'
     + '<dt>检索打分</dt><dd>score = 0.6 × 相关性 + 0.25 × importance + 0.15 × 时间新近度</dd>'
+    + '<dt>注入顺序</dt><dd>1. 角色画像 → 2. 前情提要 → 3. 相关记忆 → 4. 相关细节</dd>'
+    + '<dt>前情提要</dt><dd>【前情提要】 <span class="tm-mono">[{from}-{to}] {content}</span> —— '
+    + '摘要不参与相似度召回，按楼层顺序常驻注入</dd>'
     + '<dt>supersede 阈值</dt><dd>0.85（cosine）</dd>'
     + '<dt>遗忘打分</dt><dd>score = 0.5 × importance + 0.3 × 时间新近度 + 0.2 × 访问频率</dd>'
     + '<dt>可见性</dt><dd>global 全局可见 · character 仅同角色卡 · chat 仅当前会话</dd>'
     + '</dl>';
 
-  $('tm_status').textContent = '最近一次注入：3 条记忆 + 2 条细节 · 用 412 / 1200 token · 33ms';
+  $('tm_status').textContent = '最近一次注入：检索段 412 / 1200 token · 3 条记忆 + 2 条细节 · 前情提要 4 条 · 33ms';
 
   $('tm_summary_policy').innerHTML =
     '<div class="tm-mono">阈值 6000 · 下限 1500 · 单批上限 12000 token · 摘要上限 800 字</div>'
@@ -187,7 +192,15 @@ ${html}
     + '<div class="tm-muted">已隐藏 6 条（酒馆命令，楼层 12–17）</div>';
   $('tm_preview_result').innerHTML =
     '<div class="tm-muted">query: 艾拉为什么会离开北境的哨塔</div>'
-    + '<div>注入文本 412/1200 token · 画像 2 · 记忆 3 · 细节 2</div>'
+    + '<div>检索段 412/1200 token · 画像 2 · 记忆 3 · 细节 2 · 前情提要 4 条</div>'
+    + '<div class="tm-subsection-title">前情提要（常驻 · 不参与打分）</div>'
+    + '<div class="tm-muted">4/6 条 · 约 1180 token · 独立预算 2000 · 已丢掉最早 2 条</div>'
+    + '<pre class="tm-digest">【前情提要】\n'
+    + '[24-35] 与艾拉在酒馆初见后结伴出城，她自认得见过北境哨塔的金纹令，'
+    + '态度由戒备转为主动相助。\n'
+    + '[36-47] 哨塔哨兵拒绝放行，艾拉独自夜探，回来时袖口有血迹，未解释来历。\n'
+    + '[48-59] 主角替她遮掩，两人关系转近；她提到"上面的人"在等她回信。\n'
+    + '[60-71] 收到无名信笺，艾拉当夜离开，只留下半枚金纹令。</pre>'
     + '<div class="tm-subsection-title">记忆命中（FTS）</div>'
     + '<table class="tm-table"><thead><tr><th>类型</th><th>score</th><th>内容</th></tr></thead><tbody>'
     + '<tr><td class="tm-nowrap">事件</td><td class="tm-nowrap tm-mono">0.812</td><td>艾拉在雪夜离开哨塔，未留下字条</td></tr>'

@@ -33,6 +33,9 @@ export const DEFAULT_SETTINGS = {
   injectDepth: 4,                // 仅 in_chat 生效
   retrievalTopK: 0,              // 0 = 用服务端默认
   retrievalTokenBudget: 0,       // 0 = 用服务端默认
+  // 【前情提要】(已总结摘要链) 的独立预算。它不参与相似度打分、也不占上面的检索预算,
+  // 否则长对话里摘要会被"当前更像"的记忆挤掉, 而被隐藏的剧情就彻底没了。
+  digestMaxTokens: 0,            // 0 = 用服务端默认
   queryMessages: 1,
   queryMaxChars: 500,
 

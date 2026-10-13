@@ -9,6 +9,10 @@
 //   hiddenUpTo     —— 已被隐藏到哪一层。这些楼层不进 prompt, 也自然不计入累计。
 //   两者的差额就是"已总结但仍保留在上下文里"的那几条 (为了让模型有逐字近因)。
 //
+// 覆盖边界必须用"实际进入摘要的最后一个楼层"(batch.lastIncluded), 而不是区间末端:
+// 单批超出 maxBatchTokens 时只有前缀被摘要, 若把边界推进到区间末端,
+// 那些没进摘要的楼层会被连带隐藏 —— 既不在摘要里, 也不在 prompt 里, 等于永久丢失。
+//
 // 为什么累计要"现算"而不是增量累加: 用户随时可能编辑/删除/撤销隐藏楼层,
 // 增量计数会漂移。每次检查都按区间实算, 天然免疫。
 import {
@@ -62,13 +66,16 @@ export function createSummarizer({ api, metaStore, getSettings, log, bus }) {
   /**
    * 待总结区间统计。
    * charCount 是区间内全部未隐藏正文的字符数 (不受 maxChars 影响), 用于阈值判断;
-   * text 是按 maxChars 截断后的提交文本。
+   * text 是按 maxChars 截断后的提交文本; lastIncluded 是提交文本覆盖到的最后楼层。
    */
   function pending({ maxChars = 0 } = {}) {
     const from = summarizedUpTo() + 1;
     const to = lastMessageIndex();
     if (to < from) {
-      return { from, to, text: '', sourceMessageIds: [], messageCount: 0, charCount: 0, tokens: 0 };
+      return {
+        from, to, text: '', sourceMessageIds: [],
+        messageCount: 0, charCount: 0, tokens: 0, lastIncluded: null,
+      };
     }
     const range = collectRange({ fromIndex: from, toIndex: to, maxChars });
     return { ...range, tokens: metaStore.estimateTokensByChars(range.charCount) ?? 0 };
@@ -145,13 +152,21 @@ export function createSummarizer({ api, metaStore, getSettings, log, bus }) {
     const batch = batchChars ? pending({ maxChars: batchChars }) : full;
     if (!batch.text.trim()) return { skipped: '没有可提交的正文', trigger };
 
+    // 覆盖边界 = 实际进入摘要的最后一个楼层, 而不是区间末端。
+    // 单批受 maxBatchTokens 限制时只有前缀被摘要; 若把边界推进到区间末端,
+    // 未进摘要的楼层会被随后的隐藏连带移出 prompt —— 既不在摘要里也不在上下文里, 等于丢数据。
+    const coveredTo = batch.lastIncluded ?? batch.to;
+
     const report = {
       trigger,
       at: Date.now(),
       chatId: getChatId(),
       characterId: getCharacterId(),
       coveredFrom: batch.from,
-      coveredTo: batch.to,
+      coveredTo,
+      coveredSpan: coveredTo - batch.from + 1,
+      // 本批是否因单批上限而只覆盖了区间的一部分 (余下留给下一批)
+      batchTruncated: coveredTo < batch.to,
       messageCount: batch.messageCount,
       inputChars: batch.charCount,
       inputTokens: batch.tokens,
@@ -184,12 +199,12 @@ export function createSummarizer({ api, metaStore, getSettings, log, bus }) {
       report.truncated = res.truncated === true;
 
       // 已总结边界先推进: 即使随后的隐藏失败, 也不能让同一段被反复总结
-      await setChatState({ summarizedUpTo: batch.to, lastSummaryId: report.summaryMemoryId });
+      await setChatState({ summarizedUpTo: coveredTo, lastSummaryId: report.summaryMemoryId });
 
       // 隐藏被本次总结覆盖的正文, 但保留最近 keep 条 (keep=0 即全部隐藏)
       if (s.summaryHideAfter !== false) {
         const from = hiddenUpTo() + 1;
-        const to = Math.max(from - 1, batch.to - report.keepRecent);
+        const to = Math.max(from - 1, coveredTo - report.keepRecent);
         if (to >= from) {
           const r = await setHidden(from, to, true);
           report.hidden = r;

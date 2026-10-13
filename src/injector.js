@@ -36,12 +36,13 @@ export function createInjector({ api, metaStore, getSettings, log, bus = null })
     setExtensionPrompt(EXT_KEY, text, position, depth, false, role);
   }
 
-  /** 组装 /api/context 请求体; 0 值的 topK/tokenBudget 表示"用服务端默认", 不发送 */
+  /** 组装 /api/context 请求体; 0 值的 topK/tokenBudget/digestMaxTokens 表示"用服务端默认", 不发送 */
   function buildPayload(query) {
     const s = getSettings();
     const payload = { query, chatId: getChatId(), characterId: getCharacterId() };
     if (Number(s.retrievalTopK) > 0) payload.topK = Number(s.retrievalTopK);
     if (Number(s.retrievalTokenBudget) > 0) payload.tokenBudget = Number(s.retrievalTokenBudget);
+    if (Number(s.digestMaxTokens) > 0) payload.digestMaxTokens = Number(s.digestMaxTokens);
     return payload;
   }
 
@@ -98,6 +99,8 @@ export function createInjector({ api, metaStore, getSettings, log, bus = null })
       log.debug('注入已更新', {
         usedTokens: data?.usedTokens,
         profileCount: data?.profileCount,
+        digestCount: data?.digestCount,
+        digestTokens: data?.digestTokens,
         hitCount: data?.hitCount,
         chunkHitCount: data?.chunkHitCount,
       });

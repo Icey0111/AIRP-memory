@@ -12,7 +12,7 @@ import {
   ENTITY_TYPES, CHUNKABLE_ENTITY_TYPES, STANCE_ENTITY_TYPES,
   ASPECT_SUGGESTIONS, STANCE_TYPE_SUGGESTIONS,
   CHUNK_DEFAULTS, STANCE_DEFAULTS,
-  RETRIEVAL_SCORING, RETRIEVAL_FALLBACK_DEFAULTS, TOKEN_ESTIMATION, CONTEXT_SECTIONS,
+  RETRIEVAL_SCORING, RETRIEVAL_FALLBACK_DEFAULTS, TOKEN_ESTIMATION, CONTEXT_SECTIONS, DIGEST_FORMAT,
   THRESHOLDS, SUMMARY_POLICY, FORGET_SCORING, FORGET_TABLES,
   RULES, ENDPOINTS,
 } from '../domain/constants.js';
@@ -99,6 +99,8 @@ export function buildMeta(db, { llm = null, embed = null, retrieval = {}, runtim
         maxSummaryChars: SUMMARY_POLICY.maxSummaryChars,
         keepRecentMessages: SUMMARY_POLICY.keepRecentMessages,
         importance: SUMMARY_POLICY.defaultImportance,
+        // 前情提要段的 token 预算 (请求体 digestMaxTokens 可覆盖)
+        digestMaxTokens: SUMMARY_POLICY.digest.maxTokens,
       },
     },
 
@@ -142,6 +144,8 @@ export function buildMeta(db, { llm = null, embed = null, retrieval = {}, runtim
 
     thresholds: THRESHOLDS,
     contextSections: CONTEXT_SECTIONS,
+    // 前情提要段的文本形状: 前端展示用 (不解析), 与后端组装同源
+    digestFormat: DIGEST_FORMAT,
 
     // ---------- 长对话压缩策略: 前端据此累计 token 并决定何时总结 ----------
     // 阈值属于跨端语义, 前端不另存一份; 设置里同名字段为 0/-1 时即"用这里的值"

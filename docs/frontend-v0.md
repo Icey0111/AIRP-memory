@@ -23,7 +23,7 @@
 | 前端行为 | 语义来源 |
 |---|---|
 | 步骤开关的可用性与禁用原因 | `meta.endpoints[].needsLlm / needsEmbedding` + `meta.capabilities.*` |
-| `topK` / token 预算输入框的"服务端默认 N"提示 | `meta.defaults.retrieval` |
+| `topK` / token 预算 / 前情提要预算 输入框的"服务端默认 N"提示 | `meta.defaults.retrieval` / `meta.defaults.summary.digestMaxTokens` |
 | 契约面板里的公式、阈值、规则文案 | `meta.scoring` / `meta.thresholds` / `meta.rules` |
 | 检索预览里 `fact` 显示成"事实" | `meta.enums.memoryType` |
 | 抽取请求的 fetch 超时 | `meta.capabilities.llm.timeoutMs` + 固定余量 |
@@ -113,6 +113,7 @@ https://github.com/Icey0111/AIRP-memory
 | 注入 | 启用注入 | 关掉则完全不注入，也不请求 `/api/context` |
 | 注入 | 注入位置 / 深度 / 角色 | 主提示词 `IN_PROMPT` 或对话历史内 `IN_CHAT`（深度仅后者生效）；角色 `system`/`user`/`assistant` |
 | 注入 | topK / token 预算 | **填 0 = 用服务端默认**，输入框会显示服务端当前生效值 |
+| 注入 | 前情提要预算 | 【前情提要】摘要链的**独立**预算，不与上面的 token 预算互相挤占；**填 0 = 用服务端默认**（当前 2000） |
 | 注入 | 查询取最近 N 条 / 字数上限 | 拼成检索 query 的原文范围 |
 | 写入 | 自动写记忆 | 默认**关**。开启后每 N 条角色消息触发一轮 |
 | 写入 | 取最近 N 条 / 字数上限 | 交给抽取端点的对话原文范围 |
@@ -123,7 +124,7 @@ https://github.com/Icey0111/AIRP-memory
 | 总结 | 总结后隐藏被覆盖的正文 | 走酒馆原生 `/hide`，随时可「取消隐藏」放回 |
 | 总结 | 立即总结 / 取消隐藏 / 重置总结边界 | 见 §5.4 |
 | 手动 | 立即抽取并写入 | 手动跑一轮写入 |
-| 手动 | 检索预览 | 跑一次 `/api/context` + `/api/retrieve`，列出命中（含类型标签与分数） |
+| 手动 | 检索预览 | 跑一次 `/api/context` + `/api/retrieve`，**先列出实际会注入的【前情提要】整段**，再列出记忆/细节命中（含类型标签与分数） |
 | 诊断 | 自检并载入契约 | 重新拉 `/api/meta` + `/api/status` |
 | 诊断 | 契约 / 端点能力 / 最近状态 | 全部为服务端原文或本地运行时事实 |
 
@@ -177,16 +178,27 @@ GENERATION_AFTER_COMMANDS (dryRun 为真时跳过)
   → 换算成估算 token（系数取自服务端 scoring.tokenEstimation.charsPerToken）
   → 未达阈值则返回；超过单批上限则只取区间前一段, 其余留到下一批
   → POST /api/summarize
-  → 推进 summarizedUpTo
+  → 推进 summarizedUpTo 到"实际进了摘要的最后一个楼层"
   → 隐藏 [hiddenUpTo+1, 覆盖末端 - keepRecentMessages] → 推进 hiddenUpTo
 ```
 
 - **阈值、下限、单批上限、摘要长度上限、建议保留条数、token 系数全部来自 `/api/meta`**，前端不写死任何一个数字。契约未载入时该功能不可用，并如实说明原因。
+- **覆盖边界取"实际进了摘要的最后一个楼层"**（收集文本时是严格前缀，装不下即停）。若单批被 `maxBatchTokens` 截断却把边界推进到区间末端，那些没进摘要的楼层会被连带隐藏 —— 既不在摘要里也不在 prompt 里，等于丢数据。报告里的 `batchTruncated` 会如实标出这种情况。
 - 状态存在**酒馆的 `chat_metadata`**（随 chat 文件走，切聊天/刷新/重启都不丢）；`chat_metadata` 不可用时退化为内存对象。
 - 隐藏优先调用酒馆原生命令（`/hide`，它会刷新 UI 上的 ghost 标记），拿不到执行器时退回直接置 `chat[i].is_system`。
   失败只记日志，不影响对话。
-- 每次运行前做一次**边界归一化**：记录越界（聊天被编辑过）就重置边界并记警告，避免对错位的楼层动手。
+- 每次运行前做一次**边界归一化**：记录越界（聊天被编辑过）则重置边界并记警告，避免对错位的楼层动手。
 - 与写入侧同理，**失败只跳过、不打断对话**。
+
+#### 摘要怎么回到 prompt（前端不需要做任何事）
+
+摘要**不走相似度召回**，由服务端拼成常驻的【前情提要】段（`/api/context` 返回的 `text` 里就是完整内容）。前端因此：
+
+- 不必手动拼摘要，也不必关心它排在哪 —— 段落顺序由 `meta.contextSections` 定义；
+- 「检索预览」会把这段原文整段显示出来，用于确认"被隐藏的剧情还在不在"；
+- 状态栏显示 `前情提要 n/m 条（约 x token，独立预算 y）`。**它与检索 `tokenBudget` 是两个独立预算**，面板上的「前情提要预算」单独控制（填 0 = 用服务端默认）。
+
+完整取值与推导见 [`summarization.md`](./summarization.md) §5。
 
 完整取值依据、状态模型与调参建议见 [`summarization.md`](./summarization.md)。
 
@@ -213,7 +225,7 @@ node make-panel-preview.mjs      # 输出 docs/panel-preview.html
 后端侧对应的是：
 
 ```bash
-cd server && npm test     # extract / chunks / stances / routes / meta 五套
+cd server && npm test     # extract / chunks / stances / summarize / digest / routes / meta 七套
 ```
 
 其中 `test/meta.smoke.js` 专门钉死"前后端语义一致"：meta 的枚举权重必须与 `domain/constants.js` 同源、声明的每个端点必须真实存在、`needsLlm/needsEmbedding` 标记必须与实测行为一致、声明 `degrade=silent` 的端点在"embedding 客户端存在但未配置"时确实不报错。
@@ -235,7 +247,7 @@ cd server && npm test     # extract / chunks / stances / routes / meta 五套
 - 存的是酒馆自己的设置文件（`extension_settings` 下的 `tavernMemory` 键），随酒馆设置一起读写；删掉扩展目录不会丢设置，重装即恢复。
 - `ensureSettings()` 每次读取做 `{ ...DEFAULT_SETTINGS, ...已存值 }` 合并，**新增字段自动补默认值**，老配置不会因为少键而崩。
 - 「重置前端设置」只重置这一份偏好，**不触碰服务端任何记忆数据**。
-- 覆盖范围由 `check-static.mjs` 钉死：`DEFAULT_SETTINGS` 的每个键都必须在面板上有对应控件（当前 24 个），以后加字段忘了绑 UI 会直接测试失败。
+- 覆盖范围由 `check-static.mjs` 钉死：`DEFAULT_SETTINGS` 的每个键都必须在面板上有对应控件（当前 25 个），以后加字段忘了绑 UI 会直接测试失败。
 - 步骤开关是动态生成的，用事件委托绑定，同样即时落盘。
 - **模块折叠状态**（`uiCollapsed`）也存在这里：默认收起"写入 / 手动操作 / 诊断与契约"三个模块，你手动展开或收起后会记住，下次打开面板保持原样。它由面板自身读写、没有对应控件，因此在 `settings.js` 里显式登记在 `NO_UI_KEYS` 中（静态检查据此豁免"每个键都必须有控件"，同时校验白名单里的键真实存在）。
 - **总结边界不在这里**：`summarizedUpTo` / `hiddenUpTo` 是**每个聊天各自一份**的数据，存在 `chat_metadata` 里随 chat 文件走（见 §5.4）。放进 `extension_settings` 会变成全局一份，切聊天就串了。
