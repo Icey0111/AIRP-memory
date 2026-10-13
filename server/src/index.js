@@ -56,6 +56,16 @@ const app = express();
 // CORS 必须在 express.json 之前: 预检请求 (OPTIONS) 不带 body, 也不该被解析
 const corsOptions = config.server.cors ?? { enabled: true, origins: [] };
 app.use(createCorsMiddleware(corsOptions));
+// 临时请求日志 (诊断面板连不上用): 写入 data/http.log, 排障后可删
+app.use((req, res, next) => {
+  res.on('finish', () => {
+    try {
+      fs.appendFileSync(path.join(config.serverRoot, 'data', 'http.log'),
+        `${new Date().toISOString()} ${req.method} ${req.originalUrl} -> ${res.statusCode} origin=${req.headers.origin ?? '-'} token=${req.headers['x-tm-token'] ? 'yes' : 'no'}\n`);
+    } catch { /* 日志失败不影响服务 */ }
+  });
+  next();
+});
 app.use(express.json({ limit: '2mb' }));
 // 令牌鉴权 (可选): server.token 非空时启用, 全端点 (除 /health) 要求 X-TM-Token 头
 const tokenAuth = createTokenAuth(config.server.token);
