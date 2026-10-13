@@ -67,12 +67,15 @@ git clone https://github.com/Icey0111/AIRP-memory <SillyTavern>/public/scripts/e
 > `127.0.0.1` / `[::1]` 的任意端口。若酒馆挂在别的源（反向代理、局域网域名），
 > 把它加进 `server/config.json` 的 `server.cors.origins`。
 
-### 免终端运行：随酒馆自动启停（推荐）
+### 免终端运行：随酒馆自动启停（仅限标准版 SillyTavern）
 
-最彻底的方案：把 `server-plugin/tavern-memory/` 整个文件夹复制到酒馆根目录的 `plugins/` 下，
+把 `server-plugin/tavern-memory/` 整个文件夹复制到酒馆根目录的 `plugins/` 下，
 打开里面的 `index.js` 把顶部 `SERVER_DIR` 改成记忆服务所在目录，再在酒馆 `config.yaml` 里
 开启 `enableServerPlugins: true`，重启酒馆。效果：**酒馆启动 => 记忆服务自动后台启动；
 酒馆关闭 => 记忆服务一起停止**。零窗口、零终端、零常驻。
+
+> ⚠️ 仅适用于**标准版 SillyTavern**（Node 服务端，带 `plugins/` 目录和 `config.yaml`）。
+> TauriTavern 是原生客户端（Rust 内核，无 Node 服务端），不支持 server plugin —— 请用下方的开机自启。
 
 ### 免终端运行：开机自启（Windows）
 
