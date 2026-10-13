@@ -1,13 +1,6 @@
 @echo off
-chcp 65001 >nul
-echo == TavernMemory: install autostart (hidden background service) ==
-where node >nul 2>nul
-if errorlevel 1 (
-  echo [X] "node" not found in PATH.
-  echo     If you use TauriTavern, run this instead with its bundled node.exe:
-  echo       "path\to\node.exe" "%~dp0server\autostart-install.mjs"
-  pause
-  exit /b 1
-)
-node "%~dp0server\autostart-install.mjs"
+rem ===== TavernMemory: install autostart (hidden background service) =====
+rem Known-good node (v22, matches better-sqlite3 ABI). Change here if needed.
+set "NODEEXE=C://Users//20436//.workbuddy//binaries//node//versions//22.22.2-6//node.exe"
+"%NODEEXE%" "%~dp0server\autostart-install.mjs"
 pause

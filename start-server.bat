@@ -1,19 +1,9 @@
 @echo off
-chcp 65001 >nul
-rem == TavernMemory: 双击启动记忆服务 (最小化窗口, 可直接关掉本窗口) ==
-rem
-rem 若提示找不到 node: 把下面 NODEEXE 改成 TauriTavern 自带的 node.exe 完整路径,
-rem 并把下面的 "node src\index.js" 改成 "%NODEEXE%" src\index.js
-rem
+rem ===== TavernMemory: start service (minimized window, ASCII-only on purpose) =====
+rem Known-good node (v22, matches better-sqlite3 ABI). Change here if needed.
+set "NODEEXE=C:\Users\20436\.workbuddy\binaries\node\versions\22.22.2-6\node.exe"
 cd /d "%~dp0server"
-where node >nul 2>nul
-if not errorlevel 1 (
-  start "TavernMemory" /min cmd /c "node src\index.js"
-  echo 已启动: 服务在任务栏最小化运行, 打开酒馆面板即可自动连接。
-  timeout /t 2 >nul
-  exit /b 0
-)
-echo [X] 系统没有 node 命令。
-echo     TauriTavern 用户: 用它自带的 node.exe, 例如:
-echo       "C:\Program Files\TauriTavern\resources\node.exe" "E:\记忆系统\server\src\index.js"
-pause
+start "TavernMemory" /min cmd /c """%NODEEXE%"" src\index.js"
+echo Memory service started (minimized in taskbar).
+echo The panel will auto-connect within 10 seconds.
+timeout /t 3 >nul
