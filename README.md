@@ -77,6 +77,12 @@ git clone https://github.com/Icey0111/AIRP-memory <SillyTavern>/public/scripts/e
 > ⚠️ 仅适用于**标准版 SillyTavern**（Node 服务端，带 `plugins/` 目录和 `config.yaml`）。
 > TauriTavern 是原生客户端（Rust 内核，无 Node 服务端），不支持 server plugin —— 请用下方的开机自启。
 
+### 免终端运行：启动器（TauriTavern 用户推荐）
+
+`node server/launcher-install.mjs` 生成 **`打开酒馆（含记忆服务）.vbs`**：
+双击它 = 隐藏启动记忆服务 + 打开 TauriTavern，一步到位（建议右键 -> 发送到桌面快捷方式，
+或固定到任务栏，用它代替原来的 TauriTavern 图标）。生成脚本可随时重跑以更新路径。
+
 ### 免终端运行：开机自启（Windows）
 
 不想开终端窗口挂服务的话，装一次自启即可（服务登录后**隐藏窗口后台运行**，无任何弹窗）：
