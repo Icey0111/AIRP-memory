@@ -7,7 +7,6 @@ import { openDatabase } from './db/connection.js';
 import { migrate } from './db/migrate.js';
 import { createRouter, jsonErrorHandler } from './api/routes.js';
 import { createCorsMiddleware, describeCors } from './api/cors.js';
-import { createTokenAuth } from './api/auth.js';
 import { createLlmClient } from './services/llmClient.js';
 import { createEmbeddingClient } from './services/embeddingClient.js';
 import { createConfigApi } from './services/configService.js';
@@ -29,12 +28,8 @@ if (config.embedding.provider !== 'mock' && !config.embedding.apiKey) {
 // 绑定地址检查: 无令牌时绑定非回环地址等于把整个记忆库暴露给局域网/公网。
 // 设了 server.token 后允许安全地离开回环 (手机/局域网访问, 见 docs/api.md"远程访问")
 const isLoopback = /^(127\.|localhost$|\[?::1\]?$)/.test(config.server.host);
-const hasToken = Boolean(String(config.server.token ?? '').trim());
-if (!isLoopback && !hasToken) {
-  console.warn(`[server] 警告: 当前绑定 ${config.server.host} 但未设 server.token, 本服务无鉴权,`
-    + ' 私网内任何人都能读写记忆库。请在 config.json 的 server.token 设一个随机令牌');
-} else if (!isLoopback && hasToken) {
-  console.log(`[server] 已绑定 ${config.server.host} 并启用访问令牌鉴权 (局域网/手机可连)`);
+if (!isLoopback) {
+  console.warn(`[server] 警告: 当前绑定 ${config.server.host}, 本服务无鉴权, 私网内任何人都能读写记忆库 (仅建议在可信局域网使用)`);
 }
 
 // embedding 模型漂移检测: 换模型/换维度后, 库内旧向量会静默失效
@@ -67,9 +62,6 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.json({ limit: '2mb' }));
-// 令牌鉴权 (可选): server.token 非空时启用, 全端点 (除 /health) 要求 X-TM-Token 头
-const tokenAuth = createTokenAuth(config.server.token);
-if (tokenAuth) app.use(tokenAuth);
 
 // 客户端持有者: POST /api/config 保存模型配置后**热重建** (无需重启服务)。
 // 路由内所有引用都经 clients.* 取, 持有者对象不变、实例可换。
@@ -95,7 +87,7 @@ app.use(createRouter(db, {
     host: config.server.host,
     port: config.server.port,
     bodyLimit: '2mb',
-    cors: describeCors(corsOptions, { tokenRequired: hasToken }),
+    cors: describeCors(corsOptions),
   },
 }));
 // 统一 JSON 错误响应 (body 解析失败/超限), 必须在 router 之后挂载

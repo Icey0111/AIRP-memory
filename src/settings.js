@@ -25,11 +25,6 @@ export const DEFAULT_SETTINGS = {
   // capabilities.llm.timeoutMs 另行放宽
   requestTimeoutMs: 15000,
 
-  // 服务端访问令牌 (server.token 非空时必填)。它只是"进门的钥匙"且可随时撤销,
-  // 不是上游 API key —— 上游密钥永远只在服务端 (docs/frontend-v0.md 的既定方案)。
-  // 手机/局域网访问场景必填, 本机回环访问留空即可。
-  accessToken: '',
-
   // 模型配置的**离线暂存** (V8.2): 服务没启动时也允许填写, 存在这里;
   // 服务上线后面板自动 POST /api/config 应用并清空。
   // 注意: 暂存的是 baseUrl/model 等结构, 上游密钥仍应只在服务在线时提交;

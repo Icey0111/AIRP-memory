@@ -2,7 +2,6 @@
   "server": {
     "host": "127.0.0.1",
     "port": 7780,
-    "token": "",
     "cors": {
       "enabled": true,
       "origins": []

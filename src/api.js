@@ -47,11 +47,7 @@ export function createApi(getSettings) {
     const timer = setTimeout(() => ctrl.abort(), limit);
 
     try {
-      // 访问令牌: 服务端 server.token 非空时要求 X-TM-Token 头 (局域网/手机访问场景)
-      const token = String(getSettings()?.accessToken ?? '').trim();
-      const headers = {};
-      if (token) headers['X-TM-Token'] = token;
-      if (body !== undefined) headers['Content-Type'] = 'application/json';
+      const headers = body === undefined ? {} : { 'Content-Type': 'application/json' };
 
       const res = await fetch(`${base}${path}`, {
         method,

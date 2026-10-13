@@ -12,7 +12,6 @@ import Database from 'better-sqlite3';
 import { migrate, getSchemaVersion } from '../src/db/migrate.js';
 import { createRouter, jsonErrorHandler } from '../src/api/routes.js';
 import { createConfigApi } from '../src/services/configService.js';
-import { createTokenAuth } from '../src/api/auth.js';
 import { createMemory } from '../src/services/memoryService.js';
 import { addChunk } from '../src/services/chunkService.js';
 import { createLlmClient } from '../src/services/llmClient.js';
@@ -66,13 +65,6 @@ app.use('/unconf', createRouter(db, { llm: unconfLlm, embed: okEmbed }));
 app.use('/noembed', createRouter(db, { llm: okLlm, embed: null }));
 // embedding 客户端存在但未配置 (报错)
 app.use('/unconfembed', createRouter(db, { llm: okLlm, embed: unconfEmbed }));
-// 令牌鉴权: server.token 非空时的行为 (局域网/手机访问的安全前提)
-const tokApp = express();
-tokApp.use(express.json());
-tokApp.use(createTokenAuth('secret-token'));
-tokApp.use(createRouter(db, { llm: okLlm, embed: okEmbed }));
-app.use('/tok', tokApp);
-
 // 配置读写: 挂临时配置文件 (真实场景是 server/config.json)
 const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-cfg-'));
 const cfgPath = path.join(cfgDir, 'config.json');
@@ -328,31 +320,6 @@ const cfgForbidden = await req('POST', '/cfg/api/config', { server: { port: 9999
 check('非 llm/embedding 配置节被拒绝 (端口等只能改文件)',
   cfgForbidden.status === 400 && cfgForbidden.body.error?.includes('不允许修改'),
   JSON.stringify(cfgForbidden.body));
-
-// ---------- 9) 访问令牌鉴权 ----------
-console.log('\n--- 令牌鉴权 ---');
-check('/health 免检 (存活探针不携带任何数据)',
-  (await req('GET', '/tok/health')).status === 200);
-// 本机回环 (127.0.0.1) 发来的请求永远免检 —— 所以 HTTP 层面直接 200
-check('本机回环请求免令牌 (回环 = 信任, 本机面板零配置)',
-  (await req('GET', '/tok/api/status')).status === 200);
-// 远程语义用中间件单测模拟 (fetch 打不进非回环地址)
-const auth = createTokenAuth('secret-token');
-function probeAuth(remoteAddr, token) {
-  let status = 0, body = null, nextCalled = false;
-  const res = { status(c) { status = c; return this; }, json(o) { body = o; return this; } };
-  auth({ path: '/api/status', socket: { remoteAddress: remoteAddr }, headers: token ? { 'x-tm-token': token } : {} }, res, () => { nextCalled = true; });
-  return { status, body, nextCalled };
-}
-const r1 = probeAuth('192.168.1.50', null);
-check('远程无令牌 => 401 + 明确文案', r1.status === 401 && r1.body.ok === false && r1.body.error.includes('访问令牌'),
-  JSON.stringify(r1.body));
-const r2 = probeAuth('192.168.1.50', 'wrong');
-check('远程错误令牌 => 401', r2.status === 401);
-const r3 = probeAuth('192.168.1.50', 'secret-token');
-check('远程正确令牌 => 放行', r3.nextCalled === true);
-const r4 = probeAuth('::ffff:127.0.0.1', null);
-check('IPv6 映射的回环同样免检', r4.nextCalled === true);
 
 // ---------- 收尾 ----------
 server.close();

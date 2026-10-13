@@ -22,8 +22,7 @@ npm test                             # 三套冒烟测试（内存库，不碰�
 | `db.path` | SQLite 文件路径，默认 `./data/memory.db` |
 | `retrieval.topK` | `/api/retrieve`、`/api/context` 的默认 topK（默认 8，请求体可覆盖） |
 | `retrieval.tokenBudget` | `/api/context` 的默认 token 预算（默认 1200，请求体可覆盖） |
-| `server.host / port` | 默认 `127.0.0.1:7780`；改绑 `0.0.0.0` 供局域网/手机访问时**必须同时设 `server.token`**（见下方鉴权） |
-| `server.token` | 访问令牌。非空即启用 `X-TM-Token` 头鉴权（`/health` 免检，常量时间比较），供局域网/手机安全访问 |
+| `server.host / port` | 默认 `127.0.0.1:7780`；改绑 `0.0.0.0` 供局域网/手机访问（服务无鉴权，仅建议在可信局域网使用；跨网访问建议走 Tailscale 等加密隧道） |
 | `server.cors.enabled` | 是否下发 CORS 头，默认 `true`（前端插件跨源调用必需） |
 | `server.cors.origins` | 额外放行的来源白名单（数组）。本机 `localhost` / `127.0.0.1` / `[::1]` 的任意端口始终放行 |
 
