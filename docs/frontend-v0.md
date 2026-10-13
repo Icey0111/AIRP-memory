@@ -45,6 +45,7 @@ AIRP-memory/               ← 克隆后就是这个目录，即扩展目录
 ├── style.css              面板样式 (复用酒馆主题变量)
 ├── check-static.mjs       静态检查: HTML id ↔ JS 选择器 ↔ 默认设置是否对得上
 ├── check-contract.mjs     契约检查: 用前端自己的 api/meta 对接真实服务
+├── make-panel-preview.mjs 生成面板离线预览页 (docs/panel-preview.html, 不需要酒馆)
 ├── src/
 │   ├── bus.js             极简事件总线 (避免模块互相 import 成环)
 │   ├── log.js             日志 (debug 受开关控制)
@@ -99,6 +100,10 @@ https://github.com/Icey0111/AIRP-memory
 ---
 
 ## 4. 设置项
+
+面板按**模块**分组，每组可折叠，顶部有「展开全部 / 收起全部」。模块标题右侧那一行小字是**状态摘要**，收起状态下也能看到关键状态（连接状态、注入开关、写入节奏、可用端点数）。
+
+面板本体限高（`min(60vh, 560px)`），超出部分在面板内部滚动，不会把酒馆的设置抽屉拉得很长。折叠状态与其他偏好一起持久化（见 §8.1），默认收起不常用的三个模块。
 
 | 分组 | 项 | 说明 |
 |---|---|---|
@@ -162,7 +167,7 @@ GENERATION_AFTER_COMMANDS (dryRun 为真时跳过)
 
 ## 6. 开发校验
 
-两个脚本都在仓库根目录，用 `import.meta.url` 定位自己的同级文件，不需要酒馆环境：
+以下脚本都在仓库根目录，用 `import.meta.url` 定位自己的同级文件，不需要酒馆环境：
 
 ```bash
 # 1) 静态一致性: HTML 的 id ↔ JS 的选择器 ↔ DEFAULT_SETTINGS 的字段是否对得上
@@ -172,6 +177,10 @@ node check-static.mjs
 #    (先启动后端; 校验 canCall 与声明逐条一致、标签取自服务端、超时由服务端推算、
 #     以及服务不可达时不退回硬编码)
 node check-contract.mjs [baseUrl]
+
+# 3) 面板预览: 把 settings.html + style.css 组装成可直接打开的页面
+#    (填一份假的"已连接"数据, 能在浏览器里点折叠看排版, 不需要酒馆与后端)
+node make-panel-preview.mjs      # 输出 docs/panel-preview.html
 ```
 
 后端侧对应的是：
@@ -201,6 +210,7 @@ cd server && npm test     # extract / chunks / stances / routes / meta 五套
 - 「重置前端设置」只重置这一份偏好，**不触碰服务端任何记忆数据**。
 - 覆盖范围由 `check-static.mjs` 钉死：`DEFAULT_SETTINGS` 的每个键都必须在面板上有对应控件（当前 20 个），以后加字段忘了绑 UI 会直接测试失败。
 - 步骤开关是动态生成的，用事件委托绑定，同样即时落盘。
+- **模块折叠状态**（`uiCollapsed`）也存在这里：默认收起"写入 / 手动操作 / 诊断与契约"三个模块，你手动展开或收起后会记住，下次打开面板保持原样。它由面板自身读写、没有对应控件，因此在 `settings.js` 里显式登记在 `NO_UI_KEYS` 中（静态检查据此豁免"每个键都必须有控件"，同时校验白名单里的键真实存在）。
 
 ### 8.2 密钥（不在前端）
 

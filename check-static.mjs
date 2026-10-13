@@ -15,9 +15,11 @@ for (const m of ui.matchAll(/getElementById\(\s*'([^']+)'\s*\)/g)) refs.add(m[1]
 for (const m of ui.matchAll(/querySelector\(\s*'#([A-Za-z0-9_]+)'\s*\)/g)) refs.add(m[1]);
 for (const m of ui.matchAll(/sel:\s*'#([A-Za-z0-9_]+)'/g)) refs.add(m[1]);
 
-const DYN = 'tm_step_';
-const missing = [...refs].filter((id) => !htmlIds.has(id) && !id.startsWith(DYN));
-const unused = [...htmlIds].filter((id) => !refs.has(id) && !id.startsWith(DYN));
+// 动态生成的 id 前缀: ui.js 里用模板字符串拼出来, 静态选择器匹配不到
+const DYN_PREFIXES = ['tm_step_', 'tm_tag_'];
+const isDynamicId = (id) => DYN_PREFIXES.some((p) => id.startsWith(p));
+const missing = [...refs].filter((id) => !htmlIds.has(id) && !isDynamicId(id));
+const unused = [...htmlIds].filter((id) => !refs.has(id) && !isDynamicId(id));
 
 let fail = 0;
 const say = (ok, msg) => { console.log(`${ok ? '  OK  ' : '  FAIL'} ${msg}`); if (!ok) fail++; };
@@ -49,11 +51,43 @@ say(stepSettings.length > 0 && missingStep.length === 0,
 // 加字段时忘了绑 UI, 老配置会带上一个用户永远改不了的键 —— 这里直接钉死
 const dsMatch = settingsSrc.match(/export const DEFAULT_SETTINGS\s*=\s*\{([\s\S]*?)\n\};/);
 const dsKeys = dsMatch ? [...dsMatch[1].matchAll(/^\s{2}([A-Za-z0-9_]+):/gm)].map((m) => m[1]) : [];
-const boundKeys = new Set([...fieldKeys, ...stepSettings]);
+// NO_UI_KEYS: 由 UI 自身维护、没有控件的持久化键(如模块折叠状态)。必须显式豁免, 而不是默默放过
+const noUiMatch = settingsSrc.match(/export const NO_UI_KEYS\s*=\s*\[([^\]]*)\]/);
+const noUiKeys = noUiMatch ? [...noUiMatch[1].matchAll(/'([A-Za-z0-9_]+)'/g)].map((m) => m[1]) : [];
+const badNoUi = noUiKeys.filter((k) => !dsKeys.includes(k));
+const boundKeys = new Set([...fieldKeys, ...stepSettings, ...noUiKeys]);
 const unbound = dsKeys.filter((k) => !boundKeys.has(k));
 say(dsKeys.length > 0, `从 settings.js 解析出 DEFAULT_SETTINGS 的 ${dsKeys.length} 个键`);
+say(badNoUi.length === 0,
+  `NO_UI_KEYS 白名单里的键都真实存在${badNoUi.length ? ` — 无效: ${badNoUi.join(', ')}` : ''}`);
 say(unbound.length === 0,
-  `每个持久化字段都能在面板上调整 (共绑定 ${boundKeys.size} 个)${unbound.length ? ` — 无 UI 入口: ${unbound.join(', ')}` : ''}`);
+  `每个持久化字段都有 UI 入口或被显式豁免 (绑定 ${fieldKeys.length + stepSettings.length} 个 + 豁免 ${noUiKeys.length} 个)${unbound.length ? ` — 无 UI 入口: ${unbound.join(', ')}` : ''}`);
+
+// ---------- 面板模块: settings.html 的 data-tm-module 与 ui.js 的 MODULE_KEYS 必须一致 ----------
+const htmlModules = [...html.matchAll(/data-tm-module="([^"]+)"/g)].map((m) => m[1]);
+const modMatch = ui.match(/const MODULE_KEYS\s*=\s*\[([^\]]*)\]/);
+const uiModules = modMatch ? [...modMatch[1].matchAll(/'([A-Za-z0-9_]+)'/g)].map((m) => m[1]) : [];
+const modulesAligned = htmlModules.length > 0 && htmlModules.length === uiModules.length
+  && htmlModules.every((k) => uiModules.includes(k));
+say(modulesAligned,
+  `面板 ${htmlModules.length} 个模块与 ui.js 的 MODULE_KEYS 一一对应 (${htmlModules.join(', ')})${modulesAligned ? '' : ` — ui.js: ${uiModules.join(', ') || '未解析到'}`}`);
+
+// 每个模块都要有收起时可见的状态摘要容器, 且必须能被折叠机制寻址 (有 .tm-module-body 才藏得掉内容)
+const tagKeys = [...html.matchAll(/id="tm_tag_([^"]+)"/g)].map((m) => m[1]);
+const badTags = tagKeys.filter((k) => !htmlModules.includes(k));
+const bodyCount = (html.match(/class="tm-module-body"/g) ?? []).length;
+const headsOk = (html.match(/class="tm-module-head"/g) ?? []).length === htmlModules.length;
+say(tagKeys.length === htmlModules.length && badTags.length === 0,
+  `每个模块都有状态摘要容器 (${tagKeys.length} 个)${badTags.length ? ` — 未对应模块: ${badTags.join(', ')}` : ''}`);
+say(bodyCount === htmlModules.length && headsOk,
+  `每个模块都有可点头部与可折叠内容区 (head/body 各 ${htmlModules.length} 个, 实得 head ${(html.match(/class="tm-module-head"/g) ?? []).length} / body ${bodyCount})`);
+
+// 默认折叠状态的键必须是真实模块 (写错名字会静默无效)
+const collapseBlock = (settingsSrc.match(/uiCollapsed:\s*\{([^}]*)\}/) ?? [, ''])[1];
+const collapseKeys = [...collapseBlock.matchAll(/([A-Za-z0-9_]+):\s*(true|false)/g)].map((m) => m[1]);
+const badCollapse = collapseKeys.filter((k) => !htmlModules.includes(k));
+say(collapseKeys.length > 0 && badCollapse.length === 0,
+  `默认折叠的模块名都有效 (${collapseKeys.join(', ')})${badCollapse.length ? ` — 无效: ${badCollapse.join(', ')}` : ''}`);
 
 // ---------- 对酒馆模块的相对导入路径 ----------
 // 扩展的 HTTP 挂载点固定为 /scripts/extensions/third-party/<扩展目录>/ , 与磁盘安装位置无关。

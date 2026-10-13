@@ -13,147 +13,188 @@
         <span>启用记忆系统</span>
       </label>
 
-      <!-- ============ 连接 ============ -->
-      <div class="tm-section">
-        <div class="tm-section-title">连接</div>
-        <label class="tm-row">
-          <span class="tm-label">服务地址</span>
-          <input id="tm_base_url" class="text_pole" type="text" placeholder="http://127.0.0.1:7780">
-        </label>
-        <label class="tm-row">
-          <span class="tm-label">请求超时</span>
-          <input id="tm_timeout" class="text_pole tm-num" type="number" min="1000" max="600000" step="1000">
-          <span class="tm-muted">毫秒 · 抽取类请求会按服务端 llm.timeoutMs 自动放宽</span>
-        </label>
-        <div class="tm-row">
-          <span class="tm-label">契约与能力</span>
-          <span class="tm-actions">
-            <input id="tm_reload_meta" class="menu_button" type="button" value="自检并载入契约">
-          </span>
-        </div>
-        <div id="tm_conn_detail" class="tm-detail tm-muted">未载入</div>
+      <div class="tm-toolbar">
+        <span class="tm-muted">分区可折叠，收起状态会自动记住</span>
+        <span class="tm-actions">
+          <input id="tm_expand_all" class="menu_button" type="button" value="展开全部">
+          <input id="tm_collapse_all" class="menu_button" type="button" value="收起全部">
+        </span>
       </div>
 
-      <!-- ============ 注入 ============ -->
-      <div class="tm-section">
-        <div class="tm-section-title">记忆注入 · 每轮生成前</div>
-        <label class="checkbox_label" for="tm_inject_enabled">
-          <input id="tm_inject_enabled" type="checkbox">
-          <span>启用注入</span>
-        </label>
-        <label class="tm-row">
-          <span class="tm-label">注入位置</span>
-          <select id="tm_inject_position" class="text_pole">
-            <option value="in_prompt">主提示词 IN_PROMPT</option>
-            <option value="in_chat">对话历史内 IN_CHAT</option>
-          </select>
-        </label>
-        <label class="tm-row">
-          <span class="tm-label">注入深度</span>
-          <input id="tm_inject_depth" class="text_pole tm-num" type="number" min="0" max="100" step="1">
-          <span class="tm-muted">仅 IN_CHAT 生效</span>
-        </label>
-        <label class="tm-row">
-          <span class="tm-label">消息角色</span>
-          <select id="tm_inject_role" class="text_pole">
-            <option value="system">system</option>
-            <option value="user">user</option>
-            <option value="assistant">assistant</option>
-          </select>
-        </label>
-        <label class="tm-row">
-          <span class="tm-label">topK</span>
-          <input id="tm_topk" class="text_pole tm-num" type="number" min="0" max="50" step="1">
-          <span class="tm-muted tm-placeholder-default" data-tm-default="retrieval.topK"></span>
-        </label>
-        <label class="tm-row">
-          <span class="tm-label">token 预算</span>
-          <input id="tm_token_budget" class="text_pole tm-num" type="number" min="0" max="20000" step="100">
-          <span class="tm-muted tm-placeholder-default" data-tm-default="retrieval.tokenBudget"></span>
-        </label>
-        <div class="tm-hint">填 0 = 使用服务端默认值（默认值由 <code>GET /api/meta</code> 下发，见下方"契约"）</div>
-        <label class="tm-row">
-          <span class="tm-label">查询取最近</span>
-          <input id="tm_query_messages" class="text_pole tm-num" type="number" min="1" max="20" step="1">
-          <span class="tm-muted">条消息</span>
-          <input id="tm_query_max_chars" class="text_pole tm-num" type="number" min="50" max="4000" step="50">
-          <span class="tm-muted">字上限</span>
-        </label>
-      </div>
+      <div class="tm-sections">
 
-      <!-- ============ 写入 ============ -->
-      <div class="tm-section">
-        <div class="tm-section-title">记忆写入</div>
-        <label class="checkbox_label" for="tm_auto_write">
-          <input id="tm_auto_write" type="checkbox">
-          <span>自动写记忆</span>
-        </label>
-        <label class="tm-row">
-          <span class="tm-label">每</span>
-          <input id="tm_auto_every" class="text_pole tm-num" type="number" min="1" max="200" step="1">
-          <span class="tm-muted">条角色消息触发一轮</span>
-        </label>
-        <label class="tm-row">
-          <span class="tm-label">取最近</span>
-          <input id="tm_write_count" class="text_pole tm-num" type="number" min="1" max="100" step="1">
-          <span class="tm-muted">条对话，</span>
-          <input id="tm_write_max_chars" class="text_pole tm-num" type="number" min="200" max="20000" step="200">
-          <span class="tm-muted">字上限</span>
-        </label>
+        <!-- ============ 连接与能力 ============ -->
+        <section class="tm-module" data-tm-module="connection">
+          <div class="tm-module-head" role="button" tabindex="0" aria-expanded="true">
+            <span class="tm-caret">▾</span>
+            <span class="tm-module-title">连接与能力</span>
+            <span class="tm-module-tag" id="tm_tag_connection"></span>
+          </div>
+          <div class="tm-module-body">
+            <label class="tm-row">
+              <span class="tm-label">服务地址</span>
+              <input id="tm_base_url" class="text_pole" type="text" placeholder="http://127.0.0.1:7780">
+            </label>
+            <label class="tm-row">
+              <span class="tm-label">请求超时</span>
+              <input id="tm_timeout" class="text_pole tm-num" type="number" min="1000" max="600000" step="1000">
+              <span class="tm-muted">毫秒 · 抽取类请求会按服务端 llm.timeoutMs 自动放宽</span>
+            </label>
+            <div class="tm-row">
+              <span class="tm-label">契约与能力</span>
+              <span class="tm-actions">
+                <input id="tm_reload_meta" class="menu_button" type="button" value="自检并载入契约">
+              </span>
+            </div>
+            <div id="tm_conn_detail" class="tm-detail tm-muted">未载入</div>
+          </div>
+        </section>
 
-        <div class="tm-subsection">
-          <div class="tm-subsection-title">参与写入的步骤</div>
-          <div id="tm_step_switches" class="tm-checks"></div>
-        </div>
-      </div>
+        <!-- ============ 记忆注入 ============ -->
+        <section class="tm-module" data-tm-module="inject">
+          <div class="tm-module-head" role="button" tabindex="0" aria-expanded="true">
+            <span class="tm-caret">▾</span>
+            <span class="tm-module-title">记忆注入 · 每轮生成前</span>
+            <span class="tm-module-tag" id="tm_tag_inject"></span>
+          </div>
+          <div class="tm-module-body">
+            <label class="checkbox_label" for="tm_inject_enabled">
+              <input id="tm_inject_enabled" type="checkbox">
+              <span>启用注入</span>
+            </label>
+            <label class="tm-row">
+              <span class="tm-label">注入位置</span>
+              <select id="tm_inject_position" class="text_pole">
+                <option value="in_prompt">主提示词 IN_PROMPT</option>
+                <option value="in_chat">对话历史内 IN_CHAT</option>
+              </select>
+            </label>
+            <label class="tm-row">
+              <span class="tm-label">注入深度</span>
+              <input id="tm_inject_depth" class="text_pole tm-num" type="number" min="0" max="100" step="1">
+              <span class="tm-muted">仅 IN_CHAT 生效</span>
+            </label>
+            <label class="tm-row">
+              <span class="tm-label">消息角色</span>
+              <select id="tm_inject_role" class="text_pole">
+                <option value="system">system</option>
+                <option value="user">user</option>
+                <option value="assistant">assistant</option>
+              </select>
+            </label>
+            <label class="tm-row">
+              <span class="tm-label">topK</span>
+              <input id="tm_topk" class="text_pole tm-num" type="number" min="0" max="50" step="1">
+              <span class="tm-muted tm-placeholder-default" data-tm-default="retrieval.topK"></span>
+            </label>
+            <label class="tm-row">
+              <span class="tm-label">token 预算</span>
+              <input id="tm_token_budget" class="text_pole tm-num" type="number" min="0" max="20000" step="100">
+              <span class="tm-muted tm-placeholder-default" data-tm-default="retrieval.tokenBudget"></span>
+            </label>
+            <div class="tm-hint">填 0 = 使用服务端默认值（默认值由 <code>GET /api/meta</code> 下发，见"诊断与契约"）</div>
+            <label class="tm-row">
+              <span class="tm-label">查询取最近</span>
+              <input id="tm_query_messages" class="text_pole tm-num" type="number" min="1" max="20" step="1">
+              <span class="tm-muted">条消息</span>
+              <input id="tm_query_max_chars" class="text_pole tm-num" type="number" min="50" max="4000" step="50">
+              <span class="tm-muted">字上限</span>
+            </label>
+          </div>
+        </section>
 
-      <!-- ============ 手动 ============ -->
-      <div class="tm-section">
-        <div class="tm-section-title">手动操作</div>
-        <div class="tm-row">
-          <span class="tm-label">写入</span>
-          <span class="tm-actions">
-            <input id="tm_run_write" class="menu_button" type="button" value="立即抽取并写入">
-          </span>
-        </div>
-        <div class="tm-row">
-          <span class="tm-label">检索预览</span>
-          <input id="tm_preview_query" class="text_pole" type="text" placeholder="留空 = 用最近一条用户消息">
-          <span class="tm-actions">
-            <input id="tm_run_preview" class="menu_button" type="button" value="检索">
-          </span>
-        </div>
-        <div id="tm_preview_result" class="tm-detail tm-muted">—</div>
-      </div>
+        <!-- ============ 记忆写入 ============ -->
+        <section class="tm-module" data-tm-module="write">
+          <div class="tm-module-head" role="button" tabindex="0" aria-expanded="false">
+            <span class="tm-caret">▾</span>
+            <span class="tm-module-title">记忆写入</span>
+            <span class="tm-module-tag" id="tm_tag_write"></span>
+          </div>
+          <div class="tm-module-body">
+            <label class="checkbox_label" for="tm_auto_write">
+              <input id="tm_auto_write" type="checkbox">
+              <span>自动写记忆</span>
+            </label>
+            <label class="tm-row">
+              <span class="tm-label">每</span>
+              <input id="tm_auto_every" class="text_pole tm-num" type="number" min="1" max="200" step="1">
+              <span class="tm-muted">条角色消息触发一轮</span>
+            </label>
+            <label class="tm-row">
+              <span class="tm-label">取最近</span>
+              <input id="tm_write_count" class="text_pole tm-num" type="number" min="1" max="100" step="1">
+              <span class="tm-muted">条对话，</span>
+              <input id="tm_write_max_chars" class="text_pole tm-num" type="number" min="200" max="20000" step="200">
+              <span class="tm-muted">字上限</span>
+            </label>
 
-      <!-- ============ 端点能力 ============ -->
-      <div class="tm-section">
-        <div class="tm-section-title">端点能力</div>
-        <div class="tm-hint">可用性完全依据服务端 <code>/api/meta</code> 的 <code>endpoints[].needsLlm / needsEmbedding</code> 声明，前端不做独立判断。</div>
-        <div id="tm_cap_table" class="tm-detail tm-muted">未载入契约</div>
-      </div>
+            <div class="tm-subsection">
+              <div class="tm-subsection-title">参与写入的步骤</div>
+              <div id="tm_step_switches" class="tm-checks"></div>
+            </div>
+          </div>
+        </section>
 
-      <!-- ============ 契约 ============ -->
-      <div class="tm-section">
-        <div class="tm-section-title">契约</div>
-        <div class="tm-hint">以下全部为服务端下发原文，前端不重写</div>
-        <div id="tm_contract" class="tm-detail tm-muted">未载入契约</div>
-      </div>
+        <!-- ============ 手动操作 ============ -->
+        <section class="tm-module" data-tm-module="manual">
+          <div class="tm-module-head" role="button" tabindex="0" aria-expanded="false">
+            <span class="tm-caret">▾</span>
+            <span class="tm-module-title">手动操作</span>
+            <span class="tm-module-tag" id="tm_tag_manual"></span>
+          </div>
+          <div class="tm-module-body">
+            <div class="tm-row">
+              <span class="tm-label">写入</span>
+              <span class="tm-actions">
+                <input id="tm_run_write" class="menu_button" type="button" value="立即抽取并写入">
+              </span>
+            </div>
+            <div class="tm-row">
+              <span class="tm-label">检索预览</span>
+              <input id="tm_preview_query" class="text_pole" type="text" placeholder="留空 = 用最近一条用户消息">
+              <span class="tm-actions">
+                <input id="tm_run_preview" class="menu_button" type="button" value="检索">
+              </span>
+            </div>
+            <div id="tm_preview_result" class="tm-detail tm-muted">—</div>
+          </div>
+        </section>
 
-      <!-- ============ 状态 ============ -->
-      <div class="tm-section">
-        <div class="tm-section-title">最近状态</div>
-        <div id="tm_status" class="tm-detail tm-muted">—</div>
-      </div>
+        <!-- ============ 诊断与契约 ============ -->
+        <section class="tm-module" data-tm-module="diagnostics">
+          <div class="tm-module-head" role="button" tabindex="0" aria-expanded="false">
+            <span class="tm-caret">▾</span>
+            <span class="tm-module-title">诊断与契约</span>
+            <span class="tm-module-tag" id="tm_tag_diagnostics"></span>
+          </div>
+          <div class="tm-module-body">
+            <div class="tm-subsection">
+              <div class="tm-subsection-title">端点能力</div>
+              <div class="tm-hint">可用性完全依据服务端 <code>/api/meta</code> 的 <code>endpoints[].needsLlm / needsEmbedding</code> 声明，前端不做独立判断。</div>
+              <div id="tm_cap_table" class="tm-detail tm-muted">未载入契约</div>
+            </div>
 
-      <div class="tm-section">
-        <label class="checkbox_label" for="tm_debug">
-          <input id="tm_debug" type="checkbox">
-          <span>输出调试日志到控制台</span>
-        </label>
-        <div class="tm-actions">
-          <input id="tm_reset" class="menu_button" type="button" value="重置前端设置">
-        </div>
+            <div class="tm-subsection">
+              <div class="tm-subsection-title">契约</div>
+              <div class="tm-hint">以下全部为服务端下发原文，前端不重写</div>
+              <div id="tm_contract" class="tm-detail tm-muted">未载入契约</div>
+            </div>
+
+            <div class="tm-subsection">
+              <div class="tm-subsection-title">最近状态</div>
+              <div id="tm_status" class="tm-detail tm-muted">—</div>
+            </div>
+
+            <label class="checkbox_label" for="tm_debug">
+              <input id="tm_debug" type="checkbox">
+              <span>输出调试日志到控制台</span>
+            </label>
+            <div class="tm-actions">
+              <input id="tm_reset" class="menu_button" type="button" value="重置前端设置">
+            </div>
+          </div>
+        </section>
+
       </div>
 
     </div>

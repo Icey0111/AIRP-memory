@@ -41,6 +41,9 @@ const FIELDS = [
   { sel: '#tm_debug', key: 'debugLog', type: 'bool' },
 ];
 
+// 面板模块, 与 settings.html 里的 data-tm-module 一一对应; 顺序即显示顺序
+const MODULE_KEYS = ['connection', 'inject', 'write', 'manual', 'diagnostics'];
+
 export function mountPanel({ metaStore, injector, extractor, log, bus }) {
   const root = document.getElementById('tavern_memory_panel');
   if (!root) {
@@ -102,6 +105,7 @@ export function mountPanel({ metaStore, injector, extractor, log, bus }) {
         else if (f.type === 'int') s[f.key] = Math.max(f.min ?? 0, Math.trunc(Number(el.value) || 0));
         else s[f.key] = el.value;
         saveSettings();
+        renderModuleTags();
         if (f.after === 'reloadMeta') void reloadMeta();
       });
     }
@@ -365,6 +369,78 @@ export function mountPanel({ metaStore, injector, extractor, log, bus }) {
     if (budget && d?.tokenBudget) budget.placeholder = `${d.tokenBudget}（0=默认）`;
   }
 
+  // ---------- 模块折叠 (状态与其他偏好一起持久化) ----------
+  function moduleEl(key) {
+    return root.querySelector(`[data-tm-module="${key}"]`);
+  }
+
+  function applyCollapsed(el, collapsed) {
+    el.classList.toggle('tm-collapsed', collapsed);
+    el.querySelector('.tm-module-head')?.setAttribute('aria-expanded', String(!collapsed));
+  }
+
+  /** 把已保存的折叠状态应用到面板 (重置设置后也要重新应用) */
+  function applyStoredCollapsed() {
+    const saved = getSettings().uiCollapsed;
+    const state = (saved && typeof saved === 'object') ? saved : {};
+    for (const key of MODULE_KEYS) {
+      const el = moduleEl(key);
+      if (el) applyCollapsed(el, state[key] === true); // 未记录过的模块默认展开
+    }
+  }
+
+  function setModuleCollapsed(key, collapsed) {
+    const el = moduleEl(key);
+    if (!el) return;
+    applyCollapsed(el, collapsed);
+    const s = getSettings();
+    if (!s.uiCollapsed || typeof s.uiCollapsed !== 'object') s.uiCollapsed = {};
+    s.uiCollapsed[key] = collapsed;
+    saveSettings();
+  }
+
+  function setupModules() {
+    applyStoredCollapsed();
+
+    for (const key of MODULE_KEYS) {
+      const el = moduleEl(key);
+      const head = el?.querySelector('.tm-module-head');
+      if (!head) continue;
+      head.addEventListener('click', () => setModuleCollapsed(key, !el.classList.contains('tm-collapsed')));
+      // 头部是 div[role=button], 补上键盘可达性
+      head.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        e.preventDefault();
+        head.click();
+      });
+    }
+
+    document.getElementById('tm_expand_all')?.addEventListener('click', () => {
+      for (const key of MODULE_KEYS) setModuleCollapsed(key, false);
+    });
+    document.getElementById('tm_collapse_all')?.addEventListener('click', () => {
+      for (const key of MODULE_KEYS) setModuleCollapsed(key, true);
+    });
+  }
+
+  /** 模块头的一行摘要 —— 收起状态下也能看到关键状态 */
+  function renderModuleTags() {
+    const s = getSettings();
+    const snap = metaStore.snapshot();
+    const set = (key, text) => {
+      const el = document.getElementById(`tm_tag_${key}`);
+      if (el) el.textContent = text ?? '';
+    };
+
+    set('connection', snap.loaded ? `已连接 v${snap.meta?.version ?? '?'}` : '未连接');
+    set('inject', (s.enabled && s.injectEnabled) ? '开' : '关');
+    set('write', s.autoWriteEnabled ? `自动 · 每 ${s.autoWriteEveryNMessages} 条` : '关');
+    const eps = snap.meta?.endpoints ?? [];
+    set('diagnostics', eps.length
+      ? `${eps.filter((e) => metaStore.canCall(e.method, e.path).ok).length}/${eps.length} 端点可用`
+      : '');
+  }
+
   // ---------- 渲染: 全部 ----------
   function renderAll() {
     lastMeta = metaStore.getMeta();
@@ -377,6 +453,7 @@ export function mountPanel({ metaStore, injector, extractor, log, bus }) {
     renderStatus();
     renderPreview();
     updateActionButtons();
+    renderModuleTags();
   }
 
   /** 手动按钮的可用性依据 meta 的端点声明, 而不是前端自己判断能力 */
@@ -447,6 +524,7 @@ export function mountPanel({ metaStore, injector, extractor, log, bus }) {
   buildStepSwitches();
   loadFields();
   bindFields();
+  setupModules();
   renderAll();
 
   document.getElementById('tm_reload_meta')?.addEventListener('click', () => void reloadMeta());
@@ -457,6 +535,8 @@ export function mountPanel({ metaStore, injector, extractor, log, bus }) {
     loadFields();
     buildStepSwitches();
     renderDefaultHints();
+    applyStoredCollapsed();
+    renderModuleTags();
     toast('success', '前端设置已重置（服务端数据未改动）');
   });
 

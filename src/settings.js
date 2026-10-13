@@ -47,7 +47,14 @@ export const DEFAULT_SETTINGS = {
   deriveProfile: true,
 
   debugLog: false,
+
+  // 面板模块折叠状态 —— 由 UI 自身读写, 没有对应控件 (见下方的 NO_UI_KEYS)。
+  // 默认收起不常用的三个, 打开面板时只露出"连接与能力"和"记忆注入"。
+  uiCollapsed: { write: true, manual: true, diagnostics: true },
 };
+
+/** 由 UI 自身维护、没有面板控件的持久化键。静态检查据此豁免"每个键都必须有控件"。 */
+export const NO_UI_KEYS = ['uiCollapsed'];
 
 function clone(obj) {
   return JSON.parse(JSON.stringify(obj));

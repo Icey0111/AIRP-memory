@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>记忆系统 · 设置面板预览</title>
+<style>
+/* --- 模拟酒馆主题变量与控件外观 (仅为预览, 真实环境由酒馆提供) --- */
+:root {
+  --SmartThemeBorderColor: rgba(255, 255, 255, 0.22);
+  --SmartThemeQuoteColor: #79b8ff;
+  --white20a: rgba(255, 255, 255, 0.07);
+  --white30a: rgba(255, 255, 255, 0.14);
+}
+body {
+  margin: 0;
+  padding: 20px;
+  background: #1a1c20;
+  color: #dcdcdc;
+  font-family: system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+  font-size: 15px;
+}
+.preview-wrap { width: 430px; max-width: 100%; }
+.preview-note {
+  border: 1px dashed rgba(255, 255, 255, 0.3);
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin-bottom: 14px;
+  font-size: 0.85em;
+  line-height: 1.6;
+  opacity: 0.8;
+}
+.text_pole {
+  background: #0f1114;
+  color: #e8e8e8;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font: inherit;
+}
+.menu_button {
+  background: #2a2d33;
+  color: #e8e8e8;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 4px;
+  padding: 3px 8px;
+  font: inherit;
+  cursor: pointer;
+}
+.menu_button:disabled { opacity: 0.45; cursor: not-allowed; }
+.checkbox_label { display: flex; align-items: center; gap: 6px; margin: 3px 0; cursor: pointer; }
+input[type=checkbox] { accent-color: #79b8ff; }
+.inline-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+}
+.inline-drawer-icon { opacity: 0.6; }
+/* 记忆系统扩展面板样式
+   尽量复用 SillyTavern 主题变量, 并提供浅色/深色都能读的兜底色 */
+
+.tavern-memory {
+  font-size: 0.92em;
+}
+
+/* ---------- 模块化分区 (可折叠 + 限高滚动) ---------- */
+.tavern-memory .tm-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0;
+  font-size: 0.9em;
+}
+
+/* 面板本体限高, 超出部分在面板内部滚动, 不把酒馆设置抽屉拉长 */
+.tavern-memory .tm-sections {
+  max-height: min(60vh, 560px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 6px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(128, 128, 128, 0.45) transparent;
+}
+
+.tavern-memory .tm-sections::-webkit-scrollbar {
+  width: 6px;
+}
+
+.tavern-memory .tm-sections::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.45);
+  border-radius: 3px;
+}
+
+.tavern-memory .tm-module {
+  margin: 6px 0;
+  border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, 0.3));
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.tavern-memory .tm-module-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  background: var(--white20a, rgba(128, 128, 128, 0.08));
+}
+
+.tavern-memory .tm-module-head:hover {
+  background: var(--white30a, rgba(128, 128, 128, 0.16));
+}
+
+.tavern-memory .tm-module-head:focus-visible {
+  outline: 1px solid var(--SmartThemeQuoteColor, #7aa2f7);
+  outline-offset: -1px;
+}
+
+.tavern-memory .tm-caret {
+  flex: 0 0 auto;
+  width: 1em;
+  text-align: center;
+  opacity: 0.7;
+  transition: transform 0.15s ease;
+}
+
+.tavern-memory .tm-module-title {
+  flex: 1 1 auto;
+}
+
+/* 模块收起时也能看到的一行状态摘要 */
+.tavern-memory .tm-module-tag {
+  flex: 0 0 auto;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 400;
+  font-size: 0.85em;
+  opacity: 0.7;
+}
+
+.tavern-memory .tm-module-body {
+  padding: 6px 8px 8px;
+}
+
+.tavern-memory .tm-module.tm-collapsed .tm-caret {
+  transform: rotate(-90deg);
+}
+
+.tavern-memory .tm-module.tm-collapsed .tm-module-body {
+  display: none;
+}
+
+.tavern-memory .tm-subsection {
+  margin-top: 8px;
+}
+
+.tavern-memory .tm-subsection-title {
+  font-weight: 600;
+  opacity: 0.8;
+  margin: 8px 0 4px;
+}
+
+.tavern-memory .tm-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0;
+}
+
+.tavern-memory .tm-label {
+  flex: 0 0 auto;
+  min-width: 5.5em;
+  opacity: 0.85;
+}
+
+.tavern-memory .tm-num {
+  max-width: 6.5em;
+}
+
+.tavern-memory .tm-actions {
+  flex: 0 0 auto;
+}
+
+.tavern-memory .tm-detail {
+  margin-top: 6px;
+  line-height: 1.55;
+}
+
+.tavern-memory .tm-muted {
+  opacity: 0.68;
+}
+
+.tavern-memory .tm-hint {
+  opacity: 0.68;
+  font-size: 0.9em;
+  margin: 2px 0 6px;
+}
+
+.tavern-memory .tm-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.92em;
+}
+
+.tavern-memory .tm-nowrap {
+  white-space: nowrap;
+}
+
+.tavern-memory .tm-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* ---------- 连接横幅 ---------- */
+.tavern-memory .tm-banner {
+  padding: 6px 8px;
+  margin: 4px 0 10px;
+  border-radius: 4px;
+  border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, 0.3));
+  border-left-width: 3px;
+  word-break: break-word;
+}
+
+.tavern-memory .tm-banner-ok {
+  border-left-color: #43a047;
+}
+
+.tavern-memory .tm-banner-warn {
+  border-left-color: #fb8c00;
+}
+
+/* ---------- 状态徽标 ---------- */
+.tavern-memory .tm-badge {
+  display: inline-block;
+  padding: 0 5px;
+  border-radius: 3px;
+  border: 1px solid currentColor;
+  font-size: 0.8em;
+  line-height: 1.5;
+  white-space: nowrap;
+  vertical-align: baseline;
+}
+
+.tavern-memory .tm-badge-ok { color: #43a047; }
+.tavern-memory .tm-badge-blocked { color: #e53935; }
+.tavern-memory .tm-badge-silent { color: #fb8c00; }
+.tavern-memory .tm-badge-error { color: #e53935; }
+.tavern-memory .tm-badge-unknown { color: #9e9e9e; }
+
+.tavern-memory .tm-ok { color: #43a047; }
+.tavern-memory .tm-blocked { color: #e53935; }
+
+/* ---------- 表格 ---------- */
+.tavern-memory .tm-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 6px;
+  font-size: 0.92em;
+}
+
+.tavern-memory .tm-table th,
+.tavern-memory .tm-table td {
+  text-align: left;
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, 0.22));
+  vertical-align: top;
+}
+
+.tavern-memory .tm-table th {
+  font-weight: 600;
+  opacity: 0.75;
+}
+
+/* ---------- 定义列表 ---------- */
+.tavern-memory .tm-dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 3px 10px;
+  margin: 0;
+}
+
+.tavern-memory .tm-dl dt {
+  opacity: 0.7;
+  white-space: nowrap;
+}
+
+.tavern-memory .tm-dl dd {
+  margin: 0;
+  word-break: break-word;
+}
+
+/* ---------- 其它 ---------- */
+.tavern-memory .checkbox_label {
+  align-items: flex-start;
+}
+
+.tavern-memory code {
+  opacity: 0.8;
+  font-size: 0.9em;
+}
+
+.tavern-memory input[disabled],
+.tavern-memory input[disabled] + span {
+  opacity: 0.5;
+}
+
+</style>
+</head>
+<body>
+<div class="preview-wrap">
+  <div class="preview-note">
+    <b>面板预览</b>（离线）—— 排版与折叠交互与扩展内一致，数据是假的。<br>
+    反复点模块标题可折叠/展开；「展开全部 / 收起全部」在面板顶部。<br>
+    真实环境里折叠状态会记进酒馆设置，下次打开保持原样。
+  </div>
+<div id="tavern_memory_panel" class="tavern-memory">
+  <div class="inline-drawer">
+    <div class="inline-drawer-toggle inline-drawer-header">
+      <b>记忆系统</b>
+      <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+    </div>
+    <div class="inline-drawer-content">
+
+      <div id="tm_banner" class="tm-banner tm-banner-warn">未连接记忆服务</div>
+
+      <label class="checkbox_label" for="tm_enabled">
+        <input id="tm_enabled" type="checkbox">
+        <span>启用记忆系统</span>
+      </label>
+
+      <div class="tm-toolbar">
+        <span class="tm-muted">分区可折叠，收起状态会自动记住</span>
+        <span class="tm-actions">
+          <input id="tm_expand_all" class="menu_button" type="button" value="展开全部">
+          <input id="tm_collapse_all" class="menu_button" type="button" value="收起全部">
+        </span>
+      </div>
+
+      <div class="tm-sections">
+
+        <!-- ============ 连接与能力 ============ -->
+        <section class="tm-module" data-tm-module="connection">
+          <div class="tm-module-head" role="button" tabindex="0" aria-expanded="true">
+            <span class="tm-caret">▾</span>
+            <span class="tm-module-title">连接与能力</span>
+            <span class="tm-module-tag" id="tm_tag_connection"></span>
+          </div>
+          <div class="tm-module-body">
+            <label class="tm-row">
+              <span class="tm-label">服务地址</span>
+              <input id="tm_base_url" class="text_pole" type="text" placeholder="http://127.0.0.1:7780">
+            </label>
+            <label class="tm-row">
+              <span class="tm-label">请求超时</span>
+              <input id="tm_timeout" class="text_pole tm-num" type="number" min="1000" max="600000" step="1000">
+              <span class="tm-muted">毫秒 · 抽取类请求会按服务端 llm.timeoutMs 自动放宽</span>
+            </label>
+            <div class="tm-row">
+              <span class="tm-label">契约与能力</span>
+              <span class="tm-actions">
+                <input id="tm_reload_meta" class="menu_button" type="button" value="自检并载入契约">
+              </span>
+            </div>
+            <div id="tm_conn_detail" class="tm-detail tm-muted">未载入</div>
+          </div>
+        </section>
+
+        <!-- ============ 记忆注入 ============ -->
+        <section class="tm-module" data-tm-module="inject">
+          <div class="tm-module-head" role="button" tabindex="0" aria-expanded="true">
+            <span class="tm-caret">▾</span>
+            <span class="tm-module-title">记忆注入 · 每轮生成前</span>
+            <span class="tm-module-tag" id="tm_tag_inject"></span>
+          </div>
+          <div class="tm-module-body">
+            <label class="checkbox_label" for="tm_inject_enabled">
+              <input id="tm_inject_enabled" type="checkbox">
+              <span>启用注入</span>
+            </label>
+            <label class="tm-row">
+              <span class="tm-label">注入位置</span>
+              <select id="tm_inject_position" class="text_pole">
+                <option value="in_prompt">主提示词 IN_PROMPT</option>
+                <option value="in_chat">对话历史内 IN_CHAT</option>
+              </select>
+            </label>
+            <label class="tm-row">
+              <span class="tm-label">注入深度</span>
+              <input id="tm_inject_depth" class="text_pole tm-num" type="number" min="0" max="100" step="1">
+              <span class="tm-muted">仅 IN_CHAT 生效</span>
+            </label>
+            <label class="tm-row">
+              <span class="tm-label">消息角色</span>
+              <select id="tm_inject_role" class="text_pole">
+                <option value="system">system</option>
+                <option value="user">user</option>
+                <option value="assistant">assistant</option>
+              </select>
+            </label>
+            <label class="tm-row">
+              <span class="tm-label">topK</span>
+              <input id="tm_topk" class="text_pole tm-num" type="number" min="0" max="50" step="1">
+              <span class="tm-muted tm-placeholder-default" data-tm-default="retrieval.topK"></span>
+            </label>
+            <label class="tm-row">
+              <span class="tm-label">token 预算</span>
+              <input id="tm_token_budget" class="text_pole tm-num" type="number" min="0" max="20000" step="100">
+              <span class="tm-muted tm-placeholder-default" data-tm-default="retrieval.tokenBudget"></span>
+            </label>
+            <div class="tm-hint">填 0 = 使用服务端默认值（默认值由 <code>GET /api/meta</code> 下发，见"诊断与契约"）</div>
+            <label class="tm-row">
+              <span class="tm-label">查询取最近</span>
+              <input id="tm_query_messages" class="text_pole tm-num" type="number" min="1" max="20" step="1">
+              <span class="tm-muted">条消息</span>
+              <input id="tm_query_max_chars" class="text_pole tm-num" type="number" min="50" max="4000" step="50">
+              <span class="tm-muted">字上限</span>
+            </label>
+          </div>
+        </section>
+
+        <!-- ============ 记忆写入 ============ -->
+        <section class="tm-module" data-tm-module="write">
+          <div class="tm-module-head" role="button" tabindex="0" aria-expanded="false">
+            <span class="tm-caret">▾</span>
+            <span class="tm-module-title">记忆写入</span>
+            <span class="tm-module-tag" id="tm_tag_write"></span>
+          </div>
+          <div class="tm-module-body">
+            <label class="checkbox_label" for="tm_auto_write">
+              <input id="tm_auto_write" type="checkbox">
+              <span>自动写记忆</span>
+            </label>
+            <label class="tm-row">
+              <span class="tm-label">每</span>
+              <input id="tm_auto_every" class="text_pole tm-num" type="number" min="1" max="200" step="1">
+              <span class="tm-muted">条角色消息触发一轮</span>
+            </label>
+            <label class="tm-row">
+              <span class="tm-label">取最近</span>
+              <input id="tm_write_count" class="text_pole tm-num" type="number" min="1" max="100" step="1">
+              <span class="tm-muted">条对话，</span>
+              <input id="tm_write_max_chars" class="text_pole tm-num" type="number" min="200" max="20000" step="200">
+              <span class="tm-muted">字上限</span>
+            </label>
+
+            <div class="tm-subsection">
+              <div class="tm-subsection-title">参与写入的步骤</div>
+              <div id="tm_step_switches" class="tm-checks"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ 手动操作 ============ -->
+        <section class="tm-module" data-tm-module="manual">
+          <div class="tm-module-head" role="button" tabindex="0" aria-expanded="false">
+            <span class="tm-caret">▾</span>
+            <span class="tm-module-title">手动操作</span>
+            <span class="tm-module-tag" id="tm_tag_manual"></span>
+          </div>
+          <div class="tm-module-body">
+            <div class="tm-row">
+              <span class="tm-label">写入</span>
+              <span class="tm-actions">
+                <input id="tm_run_write" class="menu_button" type="button" value="立即抽取并写入">
+              </span>
+            </div>
+            <div class="tm-row">
+              <span class="tm-label">检索预览</span>
+              <input id="tm_preview_query" class="text_pole" type="text" placeholder="留空 = 用最近一条用户消息">
+              <span class="tm-actions">
+                <input id="tm_run_preview" class="menu_button" type="button" value="检索">
+              </span>
+            </div>
+            <div id="tm_preview_result" class="tm-detail tm-muted">—</div>
+          </div>
+        </section>
+
+        <!-- ============ 诊断与契约 ============ -->
+        <section class="tm-module" data-tm-module="diagnostics">
+          <div class="tm-module-head" role="button" tabindex="0" aria-expanded="false">
+            <span class="tm-caret">▾</span>
+            <span class="tm-module-title">诊断与契约</span>
+            <span class="tm-module-tag" id="tm_tag_diagnostics"></span>
+          </div>
+          <div class="tm-module-body">
+            <div class="tm-subsection">
+              <div class="tm-subsection-title">端点能力</div>
+              <div class="tm-hint">可用性完全依据服务端 <code>/api/meta</code> 的 <code>endpoints[].needsLlm / needsEmbedding</code> 声明，前端不做独立判断。</div>
+              <div id="tm_cap_table" class="tm-detail tm-muted">未载入契约</div>
+            </div>
+
+            <div class="tm-subsection">
+              <div class="tm-subsection-title">契约</div>
+              <div class="tm-hint">以下全部为服务端下发原文，前端不重写</div>
+              <div id="tm_contract" class="tm-detail tm-muted">未载入契约</div>
+            </div>
+
+            <div class="tm-subsection">
+              <div class="tm-subsection-title">最近状态</div>
+              <div id="tm_status" class="tm-detail tm-muted">—</div>
+            </div>
+
+            <label class="checkbox_label" for="tm_debug">
+              <input id="tm_debug" type="checkbox">
+              <span>输出调试日志到控制台</span>
+            </label>
+            <div class="tm-actions">
+              <input id="tm_reset" class="menu_button" type="button" value="重置前端设置">
+            </div>
+          </div>
+        </section>
+
+      </div>
+
+    </div>
+  </div>
+</div>
+
+</div>
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+
+  // ---------- 填一份"已连接"的假数据, 只为看排版 ----------
+  var banner = $('tm_banner');
+  banner.className = 'tm-banner tm-banner-ok';
+  banner.textContent = '已连接 tavern-memory v0.1.0 · schema 5/5';
+
+  $('tm_enabled').checked = true;
+  $('tm_base_url').value = 'http://127.0.0.1:7780';
+  $('tm_timeout').value = '15000';
+
+  $('tm_inject_enabled').checked = true;
+  $('tm_inject_position').value = 'in_prompt';
+  $('tm_inject_depth').value = '4';
+  $('tm_inject_role').value = 'system';
+  $('tm_topk').value = '0';
+  $('tm_token_budget').value = '0';
+  $('tm_query_messages').value = '1';
+  $('tm_query_max_chars').value = '500';
+
+  $('tm_auto_write').checked = false;
+  $('tm_auto_every').value = '10';
+  $('tm_write_count').value = '10';
+  $('tm_write_max_chars').value = '4000';
+
+  Array.prototype.forEach.call(document.querySelectorAll('[data-tm-default]'), function (el) {
+    el.textContent = el.getAttribute('data-tm-default') === 'retrieval.topK'
+      ? '服务端默认 8' : '服务端默认 1200';
+  });
+
+  var steps = [
+    ['six', '六要素抽取', 'POST /api/extract', true],
+    ['attrs', '属性观察', 'POST /api/extract-attributes', true],
+    ['stances', '立场抽取', 'POST /api/extract-stances', true],
+    ['derive', '画像重归纳', 'POST /api/profiles-derive', false]
+  ];
+  $('tm_step_switches').innerHTML = steps.map(function (s) {
+    return '<label class="checkbox_label" for="tm_step_' + s[0] + '">'
+      + '<input id="tm_step_' + s[0] + '" type="checkbox"' + (s[3] ? '' : ' disabled') + '>'
+      + '<span>' + s[1] + ' <code>' + s[2] + '</code> '
+      + '<span class="tm-badge ' + (s[3] ? 'tm-badge-ok' : 'tm-badge-blocked') + '">'
+      + (s[3] ? '可用' : '契约未载入') + '</span></span></label>';
+  }).join('');
+  steps.forEach(function (s) { var el = $('tm_step_' + s[0]); if (el) el.checked = s[3]; });
+
+  $('tm_conn_detail').innerHTML =
+    '<dl class="tm-dl">'
+    + '<dt>服务</dt><dd>tavern-memory v0.1.0</dd>'
+    + '<dt>schema</dt><dd>5 / 最高支持 5</dd>'
+    + '<dt>LLM</dt><dd><span class="tm-ok">可用</span> openai-compatible · gpt-4o-mini · 60000ms</dd>'
+    + '<dt>embedding</dt><dd><span class="tm-ok">可用</span> openai-compatible · bge-m3 · 1024 维</dd>'
+    + '<dt>绑定 / 鉴权</dt><dd>127.0.0.1:7780 · 鉴权 无</dd>'
+    + '<dt>表行数</dt><dd>memories 128 · attribute_chunks 342 · stances 51</dd>'
+    + '</dl>';
+
+  $('tm_cap_table').innerHTML =
+    '<table class="tm-table"><thead><tr><th>端点</th><th>依赖</th><th>状态</th><th>降级</th></tr></thead><tbody>'
+    + '<tr><td class="tm-mono">POST /api/context</td><td>—</td><td><span class="tm-badge tm-badge-ok">可用</span></td><td><span class="tm-badge tm-badge-silent">静默降级</span></td></tr>'
+    + '<tr><td class="tm-mono">POST /api/extract</td><td>LLM</td><td><span class="tm-badge tm-badge-ok">可用</span></td><td><span class="tm-badge tm-badge-error">报错</span></td></tr>'
+    + '<tr><td class="tm-mono">POST /api/extract-attributes</td><td>LLM + embedding</td><td><span class="tm-badge tm-badge-ok">可用</span></td><td><span class="tm-badge tm-badge-error">报错</span></td></tr>'
+    + '<tr><td class="tm-mono">POST /api/profiles-derive</td><td>LLM</td><td><span class="tm-badge tm-badge-blocked">LLM 未配置</span></td><td><span class="tm-badge tm-badge-error">报错</span></td></tr>'
+    + '</tbody></table>';
+
+  $('tm_contract').innerHTML =
+    '<div class="tm-muted">以下均为服务端 /api/meta 原文，前端不重写</div>'
+    + '<dl class="tm-dl">'
+    + '<dt>检索打分</dt><dd>score = 0.6 × 相关性 + 0.25 × importance + 0.15 × 时间新近度</dd>'
+    + '<dt>supersede 阈值</dt><dd>0.85（cosine）</dd>'
+    + '<dt>遗忘打分</dt><dd>score = 0.5 × importance + 0.3 × 时间新近度 + 0.2 × 访问频率</dd>'
+    + '<dt>可见性</dt><dd>global 全局可见 · character 仅同角色卡 · chat 仅当前会话</dd>'
+    + '</dl>';
+
+  $('tm_status').textContent = '最近一次注入：3 条记忆 + 2 条细节 · 用 412 / 1200 token · 33ms';
+  $('tm_preview_result').innerHTML =
+    '<div class="tm-muted">query: 艾拉为什么会离开北境的哨塔</div>'
+    + '<div>注入文本 412/1200 token · 画像 2 · 记忆 3 · 细节 2</div>'
+    + '<div class="tm-subsection-title">记忆命中（FTS）</div>'
+    + '<table class="tm-table"><thead><tr><th>类型</th><th>score</th><th>内容</th></tr></thead><tbody>'
+    + '<tr><td class="tm-nowrap">事件</td><td class="tm-nowrap tm-mono">0.812</td><td>艾拉在雪夜离开哨塔，未留下字条</td></tr>'
+    + '<tr><td class="tm-nowrap">事实</td><td class="tm-nowrap tm-mono">0.744</td><td>哨塔位于北境边境，常年积雪</td></tr>'
+    + '</tbody></table>';
+
+  // ---------- 模块摘要 ----------
+  $('tm_tag_connection').textContent = '已连接 v0.1.0';
+  $('tm_tag_inject').textContent = '开';
+  $('tm_tag_write').textContent = '关';
+  $('tm_tag_diagnostics').textContent = '16/17 端点可用';
+
+  // ---------- 折叠交互 (与 ui.js 同语义, 但预览不落盘) ----------
+  var MODULE_KEYS = ['connection', 'inject', 'write', 'manual', 'diagnostics'];
+  var state = { write: true, manual: true, diagnostics: true };
+
+  function moduleEl(key) { return document.querySelector('[data-tm-module="' + key + '"]'); }
+
+  function applyAll() {
+    MODULE_KEYS.forEach(function (key) {
+      var el = moduleEl(key);
+      if (!el) return;
+      var collapsed = state[key] === true;
+      el.classList.toggle('tm-collapsed', collapsed);
+      var head = el.querySelector('.tm-module-head');
+      if (head) head.setAttribute('aria-expanded', String(!collapsed));
+    });
+  }
+
+  applyAll();
+
+  MODULE_KEYS.forEach(function (key) {
+    var el = moduleEl(key);
+    var head = el && el.querySelector('.tm-module-head');
+    if (!head) return;
+    head.addEventListener('click', function () {
+      state[key] = !el.classList.contains('tm-collapsed');
+      applyAll();
+    });
+  });
+
+  $('tm_expand_all').addEventListener('click', function () {
+    MODULE_KEYS.forEach(function (k) { state[k] = false; });
+    applyAll();
+  });
+  $('tm_collapse_all').addEventListener('click', function () {
+    MODULE_KEYS.forEach(function (k) { state[k] = true; });
+    applyAll();
+  });
+})();
+</script>
+</body>
+</html>

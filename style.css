@@ -5,15 +5,97 @@
   font-size: 0.92em;
 }
 
-.tavern-memory .tm-section {
-  margin: 10px 0 14px;
-  padding-top: 8px;
-  border-top: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, 0.3));
+/* ---------- 模块化分区 (可折叠 + 限高滚动) ---------- */
+.tavern-memory .tm-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0;
+  font-size: 0.9em;
 }
 
-.tavern-memory .tm-section-title {
+/* 面板本体限高, 超出部分在面板内部滚动, 不把酒馆设置抽屉拉长 */
+.tavern-memory .tm-sections {
+  max-height: min(60vh, 560px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 6px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(128, 128, 128, 0.45) transparent;
+}
+
+.tavern-memory .tm-sections::-webkit-scrollbar {
+  width: 6px;
+}
+
+.tavern-memory .tm-sections::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.45);
+  border-radius: 3px;
+}
+
+.tavern-memory .tm-module {
+  margin: 6px 0;
+  border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, 0.3));
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.tavern-memory .tm-module-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
   font-weight: 600;
-  margin-bottom: 6px;
+  cursor: pointer;
+  user-select: none;
+  background: var(--white20a, rgba(128, 128, 128, 0.08));
+}
+
+.tavern-memory .tm-module-head:hover {
+  background: var(--white30a, rgba(128, 128, 128, 0.16));
+}
+
+.tavern-memory .tm-module-head:focus-visible {
+  outline: 1px solid var(--SmartThemeQuoteColor, #7aa2f7);
+  outline-offset: -1px;
+}
+
+.tavern-memory .tm-caret {
+  flex: 0 0 auto;
+  width: 1em;
+  text-align: center;
+  opacity: 0.7;
+  transition: transform 0.15s ease;
+}
+
+.tavern-memory .tm-module-title {
+  flex: 1 1 auto;
+}
+
+/* 模块收起时也能看到的一行状态摘要 */
+.tavern-memory .tm-module-tag {
+  flex: 0 0 auto;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 400;
+  font-size: 0.85em;
+  opacity: 0.7;
+}
+
+.tavern-memory .tm-module-body {
+  padding: 6px 8px 8px;
+}
+
+.tavern-memory .tm-module.tm-collapsed .tm-caret {
+  transform: rotate(-90deg);
+}
+
+.tavern-memory .tm-module.tm-collapsed .tm-module-body {
+  display: none;
 }
 
 .tavern-memory .tm-subsection {
