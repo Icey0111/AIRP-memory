@@ -4,11 +4,14 @@
 //   2) LLM / embedding 缺失时的错误文案, 以及"静默降级 vs 报错"的边界
 // 运行: node test/routes.smoke.js
 import path from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import Database from 'better-sqlite3';
 import { migrate, getSchemaVersion } from '../src/db/migrate.js';
 import { createRouter, jsonErrorHandler } from '../src/api/routes.js';
+import { createConfigApi } from '../src/services/configService.js';
 import { createMemory } from '../src/services/memoryService.js';
 import { addChunk } from '../src/services/chunkService.js';
 import { createLlmClient } from '../src/services/llmClient.js';
@@ -62,6 +65,28 @@ app.use('/unconf', createRouter(db, { llm: unconfLlm, embed: okEmbed }));
 app.use('/noembed', createRouter(db, { llm: okLlm, embed: null }));
 // embedding 客户端存在但未配置 (报错)
 app.use('/unconfembed', createRouter(db, { llm: okLlm, embed: unconfEmbed }));
+// 配置读写: 挂临时配置文件 (真实场景是 server/config.json)
+const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-cfg-'));
+const cfgPath = path.join(cfgDir, 'config.json');
+const cfgDefaults = {
+  llm: { provider: 'openai-compatible', baseUrl: '', apiKey: '', model: '', timeoutMs: 60000 },
+  embedding: { provider: 'openai-compatible', baseUrl: '', apiKey: '', model: '' },
+};
+const rebuilt = [];
+let llmForCfg = null;
+let embedForCfg = null;
+app.use('/cfg', createRouter(db, {
+  clients: { get llm() { return llmForCfg; }, get embed() { return embedForCfg; } },
+  configApi: createConfigApi({
+    filePath: cfgPath,
+    defaults: cfgDefaults,
+    rebuild(merged) {
+      rebuilt.push(merged);
+      llmForCfg = createLlmClient(merged.llm);
+      embedForCfg = createEmbeddingClient(merged.embedding);
+    },
+  }),
+}));
 // 统一 JSON 错误响应 (body 解析失败 / 超限), 与 index.js 同口径
 app.use(jsonErrorHandler);
 
@@ -245,8 +270,60 @@ check('limit=99999 实际只返回 200 行 (MAX_LIST_LIMIT 生效)',
   listClamped.status === 200 && listClamped.body.memories.length === 200,
   `实际 ${listClamped.body.memories?.length}`);
 
+// ---------- 8) 模型配置读写 (密钥只落服务端, 读取打码) ----------
+console.log('\n--- /api/config ---');
+check('未提供 configApi 的 router: GET 报明确错误 (不静默假装成功)',
+  (await req('GET', '/api/config')).body.error?.includes('配置读写未启用'));
+
+const cfgEmpty = await req('GET', '/cfg/api/config');
+check('初始视图: 未配置时 apiKeySet=false 且打码为空',
+  cfgEmpty.status === 200 && cfgEmpty.body.config.llm.apiKeySet === false
+  && cfgEmpty.body.config.llm.apiKey === '',
+  JSON.stringify(cfgEmpty.body.config?.llm));
+
+const cfgSave = await req('POST', '/cfg/api/config', {
+  llm: { baseUrl: 'https://relay.example/v1', apiKey: 'sk-test-abcd1234', model: 'glm-5' },
+});
+check('保存成功: 返回打码视图 (•••• + 末4位), 明文不出现在任何响应里',
+  cfgSave.status === 200
+  && cfgSave.body.config.llm.apiKey.startsWith('••••')
+  && cfgSave.body.config.llm.apiKey.endsWith('1234')
+  && !JSON.stringify(cfgSave.body).includes('sk-test-abcd1234'),
+  JSON.stringify(cfgSave.body.config?.llm));
+check('热重建已发生 (rebuild 回调被调, 客户端自描述更新)',
+  rebuilt.length === 1 && cfgSave.body.llm?.configured === true
+  && cfgSave.body.llm?.model === 'glm-5',
+  JSON.stringify(cfgSave.body.llm));
+
+const cfgKeep = await req('POST', '/cfg/api/config', {
+  llm: { model: 'glm-5-air', apiKey: '' },              // 空 apiKey = 保持不变
+});
+check('回传空密钥 = 保持不变 (不会把已存密钥冲掉)',
+  cfgKeep.status === 200 && cfgKeep.body.config.llm.apiKeySet === true
+  && cfgKeep.body.config.llm.model === 'glm-5-air',
+  JSON.stringify(cfgKeep.body.config?.llm));
+
+const cfgMaskEcho = await req('POST', '/cfg/api/config', {
+  llm: { apiKey: cfgKeep.body.config.llm.apiKey },       // 打码回显值原样传回 = 保持不变
+});
+check('回传打码值 = 保持不变 (打码值当不动处理)',
+  cfgMaskEcho.status === 200 && cfgMaskEcho.body.config.llm.apiKeySet === true);
+
+const onDisk = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
+check('密钥已明文写入服务端配置文件 (gitignored), 非默认节不落盘',
+  onDisk.llm.apiKey === 'sk-test-abcd1234' && onDisk.llm.model === 'glm-5-air'
+  && onDisk.llm.baseUrl === 'https://relay.example/v1'
+  && onDisk.embedding === undefined,
+  JSON.stringify(Object.keys(onDisk)));
+
+const cfgForbidden = await req('POST', '/cfg/api/config', { server: { port: 9999 } });
+check('非 llm/embedding 配置节被拒绝 (端口等只能改文件)',
+  cfgForbidden.status === 400 && cfgForbidden.body.error?.includes('不允许修改'),
+  JSON.stringify(cfgForbidden.body));
+
 // ---------- 收尾 ----------
 server.close();
 db.close();
+fs.rmSync(cfgDir, { recursive: true, force: true });
 console.log(failures === 0 ? '\n全部通过' : `\n${failures} 项失败`);
 process.exit(failures === 0 ? 0 : 1);

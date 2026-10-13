@@ -84,6 +84,10 @@ export function createApi(getSettings) {
     status: () => request('GET', '/api/status'),
     meta: () => request('GET', '/api/meta'),
 
+    // 模型配置: 密钥只在服务端落盘, 读取一律打码 (前端只做输入壳)
+    getConfig: () => request('GET', '/api/config'),
+    saveConfig: (payload, opts) => request('POST', '/api/config', { body: payload, ...opts }),
+
     context: (payload, opts) => request('POST', '/api/context', { body: payload, ...opts }),
     retrieve: (payload, opts) => request('POST', '/api/retrieve', { body: payload, ...opts }),
 

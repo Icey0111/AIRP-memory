@@ -24,7 +24,8 @@
 ```bash
 cd server
 npm install
-cp config.default.json config.json     # 填 LLM / embedding 的 baseUrl、apiKey、model
+cp config.default.json config.json     # 也可以不手动编辑: 面板"连接与能力"里有模型配置表单
+                                       # (密钥输完即遮显, 只发往服务端落盘, 保存后热生效无需重启)
 npm start                              # 127.0.0.1:7780
 ```
 

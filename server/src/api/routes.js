@@ -70,8 +70,11 @@ function usable(client) {
   return client.describe().configured === true;
 }
 
-export function createRouter(db, { llm = null, embed = null, retrieval = {}, runtime = {} } = {}) {
+export function createRouter(db, { clients = null, llm = null, embed = null, retrieval = {}, runtime = {}, configApi = null } = {}) {
   const router = Router();
+  // 客户端持有者: POST /api/config 保存后会**热重建** llm/embed,
+  // 所有一切运行时引用都必须经 clients.* 取 (持有者对象不变, 里面的实例会换)
+  const c = clients ?? { llm, embed };
 
   // 默认检索参数: 优先取 config.retrieval, 兜底取领域常量 (与 /api/meta 报告的值同源)
   const defaultTopK = Number(retrieval.topK) || RETRIEVAL_FALLBACK_DEFAULTS.topK;
@@ -100,12 +103,38 @@ export function createRouter(db, { llm = null, embed = null, retrieval = {}, run
   router.get('/api/meta', (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     res.json(buildMeta(db, {
-      llm,
-      embed,
+      llm: c.llm,
+      embed: c.embed,
       retrieval: { topK: defaultTopK, tokenBudget: defaultTokenBudget },
       runtime,
     }));
   });
+
+  // ---------- 模型配置读写 (密钥只落服务端, 读取一律打码) ----------
+
+  // 打码视图 + 重建后的客户端自描述: 面板据此显示"配没配", 自己不做任何判断
+  function configResponse() {
+    const view = configApi
+      ? configApi.view()
+      : { llm: {}, embedding: {}, note: '配置读写未启用 (服务端未提供 configApi)' };
+    return {
+      ok: true,
+      config: view,
+      llm: c.llm?.describe?.() ?? null,
+      embedding: c.embed?.describe?.() ?? null,
+    };
+  }
+
+  router.get('/api/config', handle((req, res) => {
+    if (!configApi) throw new Error('配置读写未启用');
+    res.json(configResponse());
+  }));
+
+  router.post('/api/config', handle((req, res) => {
+    if (!configApi) throw new Error('配置读写未启用');
+    configApi.update(req.body ?? {});
+    res.json(configResponse());
+  }));
 
   // ---------- 一阶记忆 ----------
   router.post('/api/memories', handle((req, res) => {
@@ -167,7 +196,7 @@ export function createRouter(db, { llm = null, embed = null, retrieval = {}, run
   // ---------- 检索与注入 ----------
   // FTS 召回记忆; embed 可用时附带向量召回的观察块 (第三路)
   // 注意: 用 usable() 而非 !!embed —— embedding 未配置时必须静默降级, 不能抛错
-  const embedIfUsable = usable(embed) ? embed : null;
+  const embedIfUsable = usable(c.embed) ? c.embed : null;
 
   router.post('/api/retrieve', handleAsync(async (req, res) => {
     const { query, chatId, characterId, topK, withChunks, includeSummaries, digestMaxTokens } = req.body ?? {};
@@ -212,9 +241,9 @@ export function createRouter(db, { llm = null, embed = null, retrieval = {}, run
 
   // ---------- 述谓实例抽取 (V6: 谁—动词—谁 + 来源/时态/极性) ----------
   router.post('/api/extract', handleAsync(async (req, res) => {
-    if (!llm) throw new Error('LLM 客户端未初始化');
+    if (!c.llm) throw new Error('LLM 客户端未初始化');
     const { chatId, text, sourceMessageIds, writeMemory } = req.body ?? {};
-    res.json(await extractInstances(db, llm, {
+    res.json(await extractInstances(db, c.llm, {
       chatId, text,
       sourceMessageIds: sourceMessageIds ?? [],
       writeMemory: writeMemory !== false,
@@ -271,13 +300,13 @@ export function createRouter(db, { llm = null, embed = null, retrieval = {}, run
 
   // ---------- 三阶抽取管线 (LLM + embedding) ----------
   router.post('/api/extract-attributes', handleAsync(async (req, res) => {
-    if (!llm) throw new Error('LLM 客户端未初始化');
-    if (!embed) throw new Error('embedding 客户端未初始化');
+    if (!c.llm) throw new Error('LLM 客户端未初始化');
+    if (!c.embed) throw new Error('embedding 客户端未初始化');
     const { chatId, text, sourceMessageIds } = req.body ?? {};
     res.json({
       ok: true,
       ...(await extractAttributes(db, {
-        llm, embed, chatId, text,
+        llm: c.llm, embed: c.embed, chatId, text,
         sourceMessageIds: sourceMessageIds ?? [],
       })),
     });
@@ -285,24 +314,24 @@ export function createRouter(db, { llm = null, embed = null, retrieval = {}, run
 
   // 画像重归纳: 当前生效观察块 -> character_profiles
   router.post('/api/profiles-derive', handleAsync(async (req, res) => {
-    if (!llm) throw new Error('LLM 客户端未初始化');
+    if (!c.llm) throw new Error('LLM 客户端未初始化');
     const { personId, characterId } = req.body ?? {};
     if (!personId || !characterId) throw new Error('personId/characterId 必填');
     res.json({
       ok: true,
-      ...(await deriveProfile(db, { llm, personId: Number(personId), characterId })),
+      ...(await deriveProfile(db, { llm: c.llm, personId: Number(personId), characterId })),
     });
   }));
 
   // ---------- 长对话压缩 (LLM) ----------
   // 前端累计楼层数达阈值时调用; 阈值来自 /api/meta 的 summaryPolicy
   router.post('/api/summarize', handleAsync(async (req, res) => {
-    if (!llm) throw new Error('LLM 客户端未初始化');
+    if (!c.llm) throw new Error('LLM 客户端未初始化');
     const {
       chatId, text, sourceMessageIds, characterId,
       inWorldTime, keywords, importance, maxChars, dedupe,
     } = req.body ?? {};
-    res.json(await summarizeConversation(db, llm, {
+    res.json(await summarizeConversation(db, c.llm, {
       chatId, text,
       sourceMessageIds: sourceMessageIds ?? [],
       characterId: characterId ?? null,
@@ -370,12 +399,12 @@ export function createRouter(db, { llm = null, embed = null, retrieval = {}, run
 
   // ---------- 立场抽取管线 (LLM) ----------
   router.post('/api/extract-stances', handleAsync(async (req, res) => {
-    if (!llm) throw new Error('LLM 客户端未初始化');
+    if (!c.llm) throw new Error('LLM 客户端未初始化');
     const { chatId, text, sourceMessageIds } = req.body ?? {};
     res.json({
       ok: true,
       ...(await extractStances(db, {
-        llm, chatId, text,
+        llm: c.llm, chatId, text,
         sourceMessageIds: sourceMessageIds ?? [],
       })),
     });

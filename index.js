@@ -54,7 +54,7 @@ jQuery(async () => {
   const extractor = createExtractor({ api, metaStore, getSettings, log, bus });
   const summarizer = createSummarizer({ api, metaStore, getSettings, log, bus });
 
-  mountPanel({ metaStore, injector, extractor, summarizer, log, bus });
+  mountPanel({ api, metaStore, injector, extractor, summarizer, log, bus });
 
   // 每轮生成前注入记忆 (契约未载入时自动跳过, 不做任何猜测)
   injector.bind();

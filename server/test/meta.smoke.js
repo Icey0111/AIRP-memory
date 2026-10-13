@@ -338,6 +338,8 @@ const SAMPLES = {
   }],
   'GET /api/stances': [],
   'GET /api/slots': [],
+  'GET /api/config': [],
+  'POST /api/config': [{ llm: { model: '' } }],
   'POST /api/forget': [{}],
   'POST /api/forget/restore': [{ table: 'memories', id: 1 }],
   'POST /api/summarize': [{ chatId: 'chat001', text: 'ELARA: x' }],

@@ -702,6 +702,9 @@ export const ENDPOINTS = [
   { method: 'POST', path: '/api/extract-attributes', summary: '三阶属性观察抽取', needsLlm: true, needsEmbedding: true, degrade: 'error', degradeNote: 'LLM 或 embedding 未配置时 400' },
   { method: 'POST', path: '/api/extract-stances', summary: '立场抽取与演化', needsLlm: true, needsEmbedding: false, degrade: 'error', degradeNote: 'LLM 未配置时 400' },
   { method: 'GET', path: '/api/slots', summary: '槽位与状态迁移 (当前指针值 + 迁移序列, 从 supersedes 链推导)', needsLlm: false, needsEmbedding: false, degrade: 'error', degradeNote: '不依赖任何外部能力' },
+
+  { method: 'GET', path: '/api/config', summary: '模型配置打码视图 (密钥只回显 ••••+末4位, 不可还原)', needsLlm: false, needsEmbedding: false, degrade: 'error', degradeNote: '不依赖任何外部能力' },
+  { method: 'POST', path: '/api/config', summary: '保存模型配置 (深合并写盘 + 热重建客户端, 无需重启; 只接受 llm/embedding 两节)', needsLlm: false, needsEmbedding: false, degrade: 'error', degradeNote: '不依赖任何外部能力; 密钥留空或回传打码值 = 保持不变' },
   { method: 'POST', path: '/api/profiles-derive', summary: '画像重归纳 (观察块 -> 生效画像)', needsLlm: true, needsEmbedding: false, degrade: 'error', degradeNote: '目标人物无生效观察块时短路返回空, 不触达 LLM (此时即便未配 LLM 也返回 200)' },
   { method: 'POST', path: '/api/summarize', summary: '长对话压缩: 一段剧情 -> 一条摘要记忆', needsLlm: true, needsEmbedding: false, degrade: 'error', degradeNote: 'LLM 未配置时 400' },
 

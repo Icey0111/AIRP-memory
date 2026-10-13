@@ -134,6 +134,24 @@ if (reachable) {
     JSON.stringify(slotsRes.attributeSlots?.slice(0, 1)));
 
   // ============================================================
+  // 3c) 模型配置 (/api/config): 密钥打码回显, 永不明文出接口
+  // ============================================================
+  console.log('\n--- 模型配置契约 ---');
+  const cfgRes = await fetch(`${baseUrl}/api/config`).then((r) => r.json());
+  check('GET /api/config 返回 ok 与两节配置',
+    cfgRes.ok === true && cfgRes.config?.llm && cfgRes.config?.embedding,
+    JSON.stringify(Object.keys(cfgRes.config ?? {})));
+  check('密钥只以打码形式出现 (空串或 ••••+末4位, 明文不出接口)',
+    cfgRes.config.llm.apiKey === '' || /^[•]{4,8}.{0,4}$/.test(cfgRes.config.llm.apiKey),
+    `apiKey=${JSON.stringify(cfgRes.config.llm.apiKey)}`);
+  check('带 apiKeySet 标记 (前端据此显示"已配置/未配置", 不自己判断)',
+    typeof cfgRes.config.embedding?.apiKeySet === 'boolean'
+    && typeof cfgRes.config.llm?.apiKeySet === 'boolean');
+  check('客户端自描述随响应下发 (configured/model 供面板直接渲染)',
+    'configured' in (cfgRes.llm ?? {}) && 'configured' in (cfgRes.embedding ?? {}),
+    JSON.stringify({ llm: cfgRes.llm?.configured, embedding: cfgRes.embedding?.configured }));
+
+  // ============================================================
   // 4) 超时由服务端推算
   // ============================================================
   console.log('\n--- 超时推算 ---');

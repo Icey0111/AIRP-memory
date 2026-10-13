@@ -56,7 +56,7 @@ const FIELDS = [
 // 面板模块, 与 settings.html 里的 data-tm-module 一一对应; 顺序即显示顺序
 const MODULE_KEYS = ['connection', 'inject', 'write', 'summary', 'manual', 'diagnostics'];
 
-export function mountPanel({ metaStore, injector, extractor, summarizer, log, bus }) {
+export function mountPanel({ api, metaStore, injector, extractor, summarizer, log, bus }) {
   const root = document.getElementById('tavern_memory_panel');
   if (!root) {
     console.error('[记忆系统] 未找到面板节点 #tavern_memory_panel, 设置面板载入失败');
@@ -653,10 +653,89 @@ export function mountPanel({ metaStore, injector, extractor, summarizer, log, bu
     try {
       const snap = await metaStore.refresh();
       renderAll();
+      await loadConfigView();          // 模型配置视图跟着契约一起刷新
       if (snap.loaded) toast('success', `契约已载入：schema ${snap.meta.schemaVersion}`);
       else toast('error', `契约载入失败：${snap.lastError ?? '未知错误'}`);
     } finally {
       if (btn) btn.disabled = false;
+    }
+  }
+
+  // ---------- 模型配置 (表单在前端, 密钥只发往服务端落盘, 不进酒馆 settings) ----------
+  // 读取一律打码 (••••+末4位, 只供辨认); 密钥输入框从不回填任何值,
+  // 留空提交 = "保持不变"。字段语义见 GET/POST /api/config (docs/api.md)。
+  let lastConfigView = null;
+
+  function renderConfigForm() {
+    const status = document.getElementById('tm_cfg_status');
+    const ids = ['tm_cfg_llm_baseurl', 'tm_cfg_llm_model', 'tm_cfg_llm_key',
+      'tm_cfg_embed_baseurl', 'tm_cfg_embed_model', 'tm_cfg_embed_key'];
+    const anyMissing = ids.some((id) => !document.getElementById(id));
+    if (anyMissing) return;
+    if (!lastConfigView) {
+      for (const id of ids) document.getElementById(id).disabled = true;
+      document.getElementById('tm_cfg_save').disabled = true;
+      status.textContent = '未连接服务 —— 模型配置需服务在线才能读取/保存';
+      return;
+    }
+    const { config } = lastConfigView;
+    document.getElementById('tm_cfg_llm_baseurl').value = config.llm?.baseUrl ?? '';
+    document.getElementById('tm_cfg_llm_model').value = config.llm?.model ?? '';
+    document.getElementById('tm_cfg_embed_baseurl').value = config.embedding?.baseUrl ?? '';
+    document.getElementById('tm_cfg_embed_model').value = config.embedding?.model ?? '';
+    // 密钥框永远清空: 已配置时只显示打码占位, 明文从不回显
+    const llmKey = document.getElementById('tm_cfg_llm_key');
+    const embedKey = document.getElementById('tm_cfg_embed_key');
+    llmKey.value = '';
+    embedKey.value = '';
+    llmKey.placeholder = config.llm?.apiKeySet ? `已配置 (${config.llm.apiKey}) · 留空保持不变` : '未配置';
+    embedKey.placeholder = config.embedding?.apiKeySet ? `已配置 (${config.embedding.apiKey}) · 留空保持不变` : '未配置';
+    for (const id of ids) document.getElementById(id).disabled = false;
+    document.getElementById('tm_cfg_save').disabled = false;
+  }
+
+  async function loadConfigView() {
+    try {
+      lastConfigView = await api.getConfig();
+    } catch {
+      lastConfigView = null;           // 服务不可达/旧版本服务无此端点 => 表单禁用
+    }
+    renderConfigForm();
+  }
+
+  async function saveConfig() {
+    const btn = document.getElementById('tm_cfg_save');
+    const status = document.getElementById('tm_cfg_status');
+    if (btn) btn.disabled = true;
+    try {
+      // 密钥只在非空时提交 (空 = 保持不变); 其余字段以表单当前值为准
+      const payload = {
+        llm: {
+          baseUrl: document.getElementById('tm_cfg_llm_baseurl').value.trim(),
+          model: document.getElementById('tm_cfg_llm_model').value.trim(),
+        },
+        embedding: {
+          baseUrl: document.getElementById('tm_cfg_embed_baseurl').value.trim(),
+          model: document.getElementById('tm_cfg_embed_model').value.trim(),
+        },
+      };
+      const llmKey = document.getElementById('tm_cfg_llm_key').value;
+      const embedKey = document.getElementById('tm_cfg_embed_key').value;
+      if (llmKey) payload.llm.apiKey = llmKey;
+      if (embedKey) payload.embedding.apiKey = embedKey;
+
+      const r = await api.saveConfig(payload);
+      lastConfigView = r;
+      renderConfigForm();
+      const cap = (d) => (d?.configured ? `${d.provider}/${d.model}` : '未配置');
+      status.textContent = `已保存并生效 (无需重启): LLM ${cap(r.llm)} · Embedding ${cap(r.embedding)}`;
+      toast('success', '模型配置已保存, 正在刷新契约…');
+      await reloadMeta();              // 热重建后能力标记会变, 重新拉契约
+    } catch (err) {
+      status.textContent = `保存失败：${err.message}`;
+      toast('error', `保存模型配置失败：${err.message}`);
+    } finally {
+      if (btn) btn.disabled = !lastConfigView;
     }
   }
 
@@ -742,8 +821,11 @@ export function mountPanel({ metaStore, injector, extractor, summarizer, log, bu
   bindFields();
   setupModules();
   renderAll();
+  renderConfigForm();
+  void loadConfigView();
 
   document.getElementById('tm_reload_meta')?.addEventListener('click', () => void reloadMeta());
+  document.getElementById('tm_cfg_save')?.addEventListener('click', () => void saveConfig());
   document.getElementById('tm_run_write')?.addEventListener('click', () => void runWrite());
   document.getElementById('tm_run_preview')?.addEventListener('click', () => void runPreview());
   document.getElementById('tm_run_summary')?.addEventListener('click', () => void runSummary());

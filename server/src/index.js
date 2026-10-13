@@ -2,13 +2,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import express from 'express';
-import { loadConfig } from './config.js';
+import { loadConfig, loadConfigDefaults } from './config.js';
 import { openDatabase } from './db/connection.js';
 import { migrate } from './db/migrate.js';
 import { createRouter, jsonErrorHandler } from './api/routes.js';
 import { createCorsMiddleware, describeCors } from './api/cors.js';
 import { createLlmClient } from './services/llmClient.js';
 import { createEmbeddingClient } from './services/embeddingClient.js';
+import { createConfigApi } from './services/configService.js';
 
 const config = loadConfig();
 const pkg = JSON.parse(fs.readFileSync(path.join(config.serverRoot, 'package.json'), 'utf-8'));
@@ -49,10 +50,25 @@ const app = express();
 const corsOptions = config.server.cors ?? { enabled: true, origins: [] };
 app.use(createCorsMiddleware(corsOptions));
 app.use(express.json({ limit: '2mb' }));
-const llm = createLlmClient(config.llm);
-const embed = createEmbeddingClient(config.embedding);
+
+// 客户端持有者: POST /api/config 保存模型配置后**热重建** (无需重启服务)。
+// 路由内所有引用都经 clients.* 取, 持有者对象不变、实例可换。
+const clients = {
+  llm: createLlmClient(config.llm),
+  embed: createEmbeddingClient(config.embedding),
+};
+const configApi = createConfigApi({
+  filePath: path.join(config.serverRoot, 'config.json'),
+  defaults: loadConfigDefaults(),
+  rebuild(merged) {
+    clients.llm = createLlmClient(merged.llm);
+    clients.embed = createEmbeddingClient(merged.embedding);
+    console.log(`[config] 模型配置已保存并热重建: llm=${merged.llm.model || '未配置'} / embedding=${merged.embedding.model || '未配置'}`);
+  },
+});
 app.use(createRouter(db, {
-  llm, embed,
+  clients,
+  configApi,
   retrieval: config.retrieval,
   runtime: {
     version: pkg.version,

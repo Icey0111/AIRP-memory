@@ -328,6 +328,41 @@ V6 新增的两条注入口径（`meta.verbLayer` 下发）：
 
 ---
 
+## 7.5 模型配置 `/api/config`
+
+模型与密钥的**可视化填写入口**。安全模型：密钥**只在服务端落盘**（`server/config.json`，已 gitignore），
+前端只做输入壳 —— 读取一律打码（`••••`+末4位，只供辨认，不可还原），密钥输入框从不回填明文。
+保存后**深合并写盘 + 热重建客户端**，无需重启服务。只接受 `llm` / `embedding` 两节，
+其余配置（端口/数据库路径/CORS）只能改文件并重启。
+
+### `GET /api/config`
+
+```json
+{ "ok": true,
+  "config": {
+    "llm": { "provider": "openai-compatible", "baseUrl": "https://…/v1", "model": "…",
+             "apiKey": "••••••••9999", "apiKeySet": true, "timeoutMs": 60000 },
+    "embedding": { "provider": "openai-compatible", "baseUrl": "", "model": "", "apiKey": "", "apiKeySet": false }
+  },
+  "llm": { "configured": true, "provider": "openai-compatible", "model": "…", "timeoutMs": 60000 },
+  "embedding": { "configured": false, "reason": "未配置" } }
+```
+
+`apiKeySet` 是"已配置"的权威标记 —— 前端据此显示占位提示，**不自己判断**。
+
+### `POST /api/config`
+
+```json
+{ "llm": { "baseUrl": "https://…/v1", "apiKey": "sk-…", "model": "…" },
+  "embedding": { "baseUrl": "https://…/v1", "apiKey": "sk-…", "model": "…" } }
+```
+
+- **密钥留空或回传打码值 = 保持不变**（不会把已存密钥冲掉），所以表单可以整体原样提交
+- 非白名单字段被忽略，非 `llm`/`embedding` 的配置节返回 400（端口等不允许从 HTTP 改）
+- 返回体与 `GET` 相同（保存后的打码视图 + 重建后的客户端自描述）
+
+---
+
 ## 8. 立场层 `/api/stances`
 
 关系 = 可演化的相对立场。有向不对称：`A→B` 与 `B→A` 是两条记录。多态：`person`/`org` 互指。
@@ -467,6 +502,8 @@ holder 与 target 同实体 → 400。
 
 槽位与迁移 (V7, 只读):
   GET  /api/slots?chatId=        当前指针值 + 迁移序列 (从 supersedes 链推导)
+  GET  /api/config               模型配置打码视图 (密钥 ••••+末4位)
+  POST /api/config               保存模型配置 (深合并写盘 + 热重建, 密钥留空=保持不变)
 
 画像更新(抽取了属性块之后, 或手动):
   POST /api/profiles-derive { personId, characterId }

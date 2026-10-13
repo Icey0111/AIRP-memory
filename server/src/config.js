@@ -18,9 +18,7 @@ function deepMerge(base, override) {
 }
 
 export function loadConfig() {
-  const defaults = JSON.parse(
-    fs.readFileSync(path.join(serverRoot, 'config.default.json'), 'utf-8')
-  );
+  const defaults = loadConfigDefaults();
   const userPath = path.join(serverRoot, 'config.json');
   const user = fs.existsSync(userPath)
     ? JSON.parse(fs.readFileSync(userPath, 'utf-8'))
@@ -34,4 +32,11 @@ export function loadConfig() {
   config.db.schemaDir = path.resolve(serverRoot, config.db.schemaDir);
 
   return config;
+}
+
+/** config.default.json 原文 (configService 的合并底; 相对路径保持未解析形态) */
+export function loadConfigDefaults() {
+  return JSON.parse(
+    fs.readFileSync(path.join(serverRoot, 'config.default.json'), 'utf-8')
+  );
 }
