@@ -149,5 +149,53 @@ check('prompt 保持信息正交性 (正文不复述时间/人物/地点)',
 check('prompt 要求重复日常照原样抽 (折叠交给管线)',
   SYSTEM_PROMPT.includes('不要自己合并'));
 
+console.log('\n--- 身份锚定 (真实环境教训: 卡名 Seraphina vs 文本译名塞拉菲娜, 画像归纳曾因此跳过) ---');
+// 三道防线:
+//   1) prompt 锚定指令让模型把卡名写进别名 (语义判断, 只有模型做得到);
+//   2) 用户强制 main 一等节点 (确定性兜底, 模型标错也改得回来);
+//   3) 下游 derive 按主名或别名匹配 (前端)。
+// 本节钉住 1) 的落库通路与 2) 的兜底。
+const ANCHOR_JSON = JSON.stringify({
+  people: [
+    // 模拟听话的模型: 收到锚定指令后把卡名并进了别名
+    { name: '塞拉菲娜', aliases: ['Seraphina'], person_type: 'npc' },
+    // 模拟不听话的模型: 用户照旧标成 npc
+    { name: '你', person_type: 'npc' },
+  ],
+  instances: [],
+});
+const anchorLlm = createLlmClient({ provider: 'mock', mockResponse: ANCHOR_JSON });
+const r3 = await extractInstances(db, anchorLlm, {
+  chatId: 'chat002',
+  text: '(锚定测试, mock 通道不读)',
+  characterName: 'Seraphina',
+  userName: '你',
+});
+const sel = db.prepare("SELECT * FROM people WHERE name='塞拉菲娜'").get();
+check('锚定后的卡名别名落库 (模型做对时管线不破坏)',
+  JSON.parse(sel.aliases).includes('Seraphina'), `实际 ${sel.aliases}`);
+check('锚定不产生第二个人物行', db.prepare("SELECT COUNT(*) n FROM people WHERE name='塞拉菲娜'").get().n === 1);
+const you = db.prepare("SELECT * FROM people WHERE name='你'").get();
+check('用户强制 main 一等节点 (模型标了 npc, 兜底改回)',
+  you.person_type === 'main', `实际 ${you.person_type}`);
+check('回传行带别名/类型 (前端 derive 依赖这两个字段匹配)',
+  JSON.parse(r3.people.find((p) => p.name === '塞拉菲娜').aliases).includes('Seraphina')
+  && r3.people.find((p) => p.name === '你').person_type === 'main');
+
+// 用户名无命中时不猜不建: 只跳过锚定, 不影响抽取本身
+const beforePeople = db.prepare('SELECT COUNT(*) n FROM people').get().n;
+const r4 = await extractInstances(db, anchorLlm, {
+  chatId: 'chat003', text: '(无用户登场)', userName: '存在感为零的用户',
+});
+check('用户名无命中: 不新建人物', db.prepare('SELECT COUNT(*) n FROM people').get().n === beforePeople);
+check('用户名无命中: 抽取照常返回', r4.ok === true);
+
+// 主名本身就是用户名时: 类型已是 main, 不回退也不重复写
+const r5 = await extractInstances(db, anchorLlm, {
+  chatId: 'chat004', text: '(再次提到你)', userName: '你',
+});
+const youAgain = db.prepare("SELECT * FROM people WHERE name='你'").get();
+check('person_type 保持 main 不回退', youAgain.person_type === 'main');
+
 console.log(failures === 0 ? '\n全部通过' : `\n${failures} 项失败`);
 process.exit(failures === 0 ? 0 : 1);

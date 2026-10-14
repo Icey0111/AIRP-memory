@@ -8,7 +8,7 @@
 //
 // 降级原则: 任何一步失败都只跳过该步并记日志, 绝不影响对话与注入。
 // 可用性判定: 完全依据服务端 /api/meta 声明的 needsLlm / needsEmbedding (metaStore.canCall)。
-import { collectMessages, getChatId, getCharacterId } from './session.js';
+import { collectMessages, getChatId, getCharacterId, getUserName } from './session.js';
 
 /** 四个步骤的端点引用。路径是 API 结构 (非语义), 显示名与描述取自服务端 meta。 */
 const STEP_DEFS = {
@@ -132,7 +132,13 @@ export function createExtractor({ api, metaStore, getSettings, log, bus }) {
 
       if (s[STEP_DEFS.six.setting]) {
         await step(report, STEP_DEFS.six, async () => {
-          const r = await api.extract({ chatId, text, sourceMessageIds }, opts);
+          // 身份锚定: 卡名/用户名交给服务端 (让模型把译名并进别名、把用户标成 main 一等节点)。
+          // 服务端还有确定性兜底, 这里传参只是让它第一道就做对。
+          const r = await api.extract({
+            chatId, text, sourceMessageIds,
+            characterName: characterId || null,
+            userName: getUserName(),
+          }, opts);
           report.people = Array.isArray(r.people) ? r.people : [];
           const parts = [
             `${label('entityType', 'person')} ${report.people.length}`,
@@ -179,10 +185,16 @@ export function createExtractor({ api, metaStore, getSettings, log, bus }) {
       if (s[STEP_DEFS.derive.setting]) {
         await step(report, STEP_DEFS.derive, async () => {
           // profiles-derive 的 characterId 是角色卡名, personId 必须是 people 表整数 id。
-          // 只有本轮的六要素结果能给出这个映射 —— 拿不到就如实跳过, 不猜 id。
-          const target = report.people.find((p) => p?.name === characterId);
+          // 匹配口径: 卡名 = 主名或别名 (大小写不敏感) —— 抽取侧会把卡名锚进别名, 但
+          // 历史数据/本轮漏抽时只能靠这里放宽。拿不到就如实跳过, 不猜 id。
+          const norm = (x) => String(x ?? '').trim().toLowerCase();
+          const aliasList = (p) => {
+            try { const a = JSON.parse(p?.aliases ?? '[]'); return Array.isArray(a) ? a : []; } catch { return []; }
+          };
+          const target = report.people.find((p) => norm(p?.name) === norm(characterId)
+            || aliasList(p).some((a) => norm(a) === norm(characterId)));
           if (!target) {
-            return { skip: `本轮抽取出的人物里没有当前角色卡「${characterId}」, 无对应 personId, 跳过归纳` };
+            return { skip: `本轮抽取出的人物 (含别名) 中没有角色卡「${characterId}」, 无对应 personId, 跳过归纳` };
           }
           report.derivePersonId = target.id;
           const r = await api.deriveProfile({ personId: target.id, characterId }, opts);

@@ -698,7 +698,7 @@ export const ENDPOINTS = [
   { method: 'POST', path: '/api/context', summary: '注入组装, 前端每轮生成前的主入口', needsLlm: false, needsEmbedding: false, degrade: 'silent', degradeNote: '未配 embedding 或 embedding 服务故障时无【相关细节】段 (故障原因经 chunkError 字段上报), 仍返回画像与 FTS 记忆' },
   { method: 'POST', path: '/api/retrieve', summary: '三路召回原始结果 (调试用)', needsLlm: false, needsEmbedding: false, degrade: 'silent', degradeNote: '未配 embedding 时响应无 chunkHits 字段; embedding 服务故障时返回 chunkError 而非 400' },
 
-  { method: 'POST', path: '/api/extract', summary: '述谓实例抽取 (谁—动词—谁 + 来源/时态/极性, 含人物/地点/时间点/因果边)', needsLlm: true, needsEmbedding: false, degrade: 'error', degradeNote: 'LLM 未配置时 400' },
+  { method: 'POST', path: '/api/extract', summary: '述谓实例抽取 (谁—动词—谁 + 来源/时态/极性, 含人物/地点/时间点/因果边; 可选 characterName/userName 身份锚定: 卡名并入人物别名, 用户强制 main 一等节点)', needsLlm: true, needsEmbedding: false, degrade: 'error', degradeNote: 'LLM 未配置时 400' },
   { method: 'POST', path: '/api/extract-attributes', summary: '三阶属性观察抽取', needsLlm: true, needsEmbedding: true, degrade: 'error', degradeNote: 'LLM 或 embedding 未配置时 400' },
   { method: 'POST', path: '/api/extract-stances', summary: '立场抽取与演化', needsLlm: true, needsEmbedding: false, degrade: 'error', degradeNote: 'LLM 未配置时 400' },
   { method: 'GET', path: '/api/slots', summary: '槽位与状态迁移 (当前指针值 + 迁移序列, 从 supersedes 链推导)', needsLlm: false, needsEmbedding: false, degrade: 'error', degradeNote: '不依赖任何外部能力' },

@@ -46,6 +46,13 @@ export function getCharacterId() {
     || 'unknown';
 }
 
+/** 用户本人名称 (酒馆 name1)。抽取身份锚定用: 服务端据此把用户标成 main 一等节点。拿不到返回 null。 */
+export function getUserName() {
+  const ctx = getContext();
+  const n = ctx?.name1;
+  return typeof n === 'string' && n.trim() ? n.trim() : null;
+}
+
 export function isGroupChat() {
   const ctx = getContext();
   return Boolean(ctx?.groupId) || Array.isArray(ctx?.groups) && ctx?.groupId !== undefined;

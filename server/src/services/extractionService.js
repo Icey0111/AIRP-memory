@@ -77,6 +77,61 @@ export const SYSTEM_PROMPT = `你是角色扮演剧情的述谓抽取器。请�
 7. 「要么 A 要么 B」这类**择一**必须用 alternatives 表达, 绝不能抽成两条并行实例 ——
    并行实例在读法上等于"两件事都发生了", 那是凭空编造。只有其中之一会被兑现, 其余作废。`;
 
+/**
+ * 身份锚定指令 (可选): 把角色卡名/用户名告诉抽取模型。
+ * 背景: 文本里 AI 角色常以译名出现 (卡名 Seraphina, 文本写"塞拉菲娜"), 模型不知道两者是同一人,
+ * 别名就落空, 下游画像归纳 (profiles-derive 按卡名找人) 会跳过。用户同理: "你"是用户,
+ * 架构规定用户是一等节点 (person_type="main"), 但模型无从判断谁是用户。
+ */
+function buildIdentityAnchor({ characterName, userName }) {
+  const lines = [];
+  const cn = String(characterName ?? '').trim();
+  const un = String(userName ?? '').trim();
+  if (cn) {
+    lines.push(`当前对话的 AI 角色卡名: 「${cn}」。该角色在文本中可能以别名/译名/称呼出现; `
+      + `只要判定文本中的某个人物就是这个角色, 对应 people 条目的 aliases 数组必须包含「${cn}」。`);
+  }
+  if (un) {
+    lines.push(`用户本人名称: 「${un}」。文本中以第二人称"你"或此名称指代的用户人物, `
+      + `其 person_type 必须为 "main"; 其余人物不得为 "main"。`);
+  }
+  return lines.length ? `【身份锚定 (最高优先级)】\n${lines.join('\n')}` : '';
+}
+
+// 名字归一比较: trim + 小写。卡名/别名/用户名的匹配一律走这里, 不做模糊匹配 (宁可放过不可错并)。
+function normName(s) {
+  return String(s ?? '').trim().toLowerCase();
+}
+
+function personMatchesName(p, target) {
+  const t = normName(target);
+  if (!t) return false;
+  if (normName(p?.name) === t) return true;
+  try {
+    const aliases = JSON.parse(p?.aliases ?? '[]');
+    return Array.isArray(aliases) && aliases.some((a) => normName(a) === t);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 身份锚定兜底 (确定性, 不依赖模型听话): 抽取结果落库后补齐硬规则。
+ * 用户名: 命中的人物强制 person_type="main" (用户一等节点, 见注入图视角设计)。
+ * 注意: 卡名→译名的跨语言映射 (Seraphina vs 塞拉菲娜) 本质需要语义判断, 确定性规则做不到,
+ * 只能靠 buildIdentityAnchor 的 prompt 指令 + 下游按别名匹配。没有命中就什么都不做 —— 不猜、不新建、不错并。
+ */
+function applyIdentityAnchors(db, people, { userName }) {
+  const un = String(userName ?? '').trim();
+  if (!un) return;
+  const ts = new Date().toISOString();
+  const p = people.find((x) => personMatchesName(x, un));
+  if (p && p.person_type !== 'main') {
+    db.prepare("UPDATE people SET person_type = 'main', updated_at = ? WHERE id = ?").run(ts, p.id);
+    p.person_type = 'main';
+  }
+}
+
 // 容错解析: 剥代码围栏, 截取首个 { 到末个 } 之间内容
 // (三个抽取器共用: chunkExtractionService / stanceExtractionService 均从此导入)
 export function parseJsonLoose(raw) {
@@ -93,18 +148,24 @@ export function parseJsonLoose(raw) {
 
 /**
  * 抽取述谓实例并落库。
+ * @param {object} opts
+ * @param {string|null} [opts.characterName] AI 角色卡名 (身份锚定: 并入别名, 供画像归纳按卡名找人)
+ * @param {string|null} [opts.userName] 用户名 (身份锚定: 强制 person_type="main" 一等节点)
  * @returns {{ok:boolean, people:Array, locations:Array, timePoint:object|null,
  *            instances:Array, links:Array, memoryIds:Array, skipped:number}}
  */
-export async function extractInstances(db, llm, { chatId, text, sourceMessageIds = [], writeMemory = true }) {
+export async function extractInstances(db, llm, {
+  chatId, text, sourceMessageIds = [], writeMemory = true, characterName = null, userName = null,
+}) {
   if (!chatId) throw new Error('chatId 必填');
   if (!text || !text.trim()) throw new Error('text 不能为空');
 
-  const raw = await llm.chat({ system: SYSTEM_PROMPT, user: text });
+  const anchor = buildIdentityAnchor({ characterName, userName });
+  const raw = await llm.chat({ system: SYSTEM_PROMPT, user: anchor ? `${anchor}\n\n---\n\n${text}` : text });
   const data = parseJsonLoose(raw);
 
   const result = db.transaction(() =>
-    persistInstances(db, data, { chatId, sourceMessageIds, writeMemory })
+    persistInstances(db, data, { chatId, sourceMessageIds, writeMemory, characterName, userName })
   )();
 
   // 写入后立即对齐: 新落库的事实可能兑现/推翻既有命题 (集合只含未决命题, 很小)。
@@ -132,7 +193,7 @@ function resolveStatus({ sourceType, tense }) {
     : VERB_LAYER.defaults.status;
 }
 
-function persistInstances(db, data, { chatId, sourceMessageIds, writeMemory }) {
+function persistInstances(db, data, { chatId, sourceMessageIds, writeMemory, characterName, userName }) {
   const out = {
     people: [], locations: [], timePoint: null,
     instances: [], links: [], memoryIds: [], skipped: 0,
@@ -147,6 +208,8 @@ function persistInstances(db, data, { chatId, sourceMessageIds, writeMemory }) {
       personType: p.person_type ?? 'npc',
     }));
   }
+  // 身份锚定兜底: 用户强制 main 一等节点 (确定性规则)。卡名→译名靠 prompt 指令 + 下游别名匹配。
+  applyIdentityAnchors(db, out.people, { userName });
   for (const l of data.locations ?? []) {
     if (!l?.name) continue;
     out.locations.push(findOrCreateLocation(db, { name: l.name, parentName: l.parent }));

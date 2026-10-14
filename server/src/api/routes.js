@@ -212,8 +212,11 @@ export function createRouter(db, { clients = null, llm = null, embed = null, ret
 
   // ---------- 检索与注入 ----------
   // FTS 召回记忆; embed 可用时附带向量召回的观察块 (第三路)
-  // 注意: 用 usable() 而非 !!embed —— embedding 未配置时必须静默降级, 不能抛错
-  const embedIfUsable = usable(c.embed) ? c.embed : null;
+  // 注意: 用 usable() 而非 !!embed —— embedding 未配置时必须静默降级, 不能抛错。
+  // 必须每次调用时动态判定 (函数而非捕获值): c.embed 会在 POST /api/config 后热重建,
+  // 若在 createRouter 时把实例捕获进常量, 服务启动后补配置的部署会出现
+  // "meta 声明 embedding available 但向量召回永远静默跳过" 的声明与实际不一致。
+  const embedIfUsable = () => (usable(c.embed) ? c.embed : null);
 
   router.post('/api/retrieve', handleAsync(async (req, res) => {
     const { query, chatId, characterId, topK, withChunks, includeSummaries, digestMaxTokens } = req.body ?? {};
@@ -225,11 +228,11 @@ export function createRouter(db, { clients = null, llm = null, embed = null, ret
     });
     // 前情提要与相似度召回是两条独立通道, 调试时也要能看到它实际会注入什么
     const out = { ok: true, match, hits, digest: buildDigest(db, { chatId, maxTokens: digestMaxTokens }) };
-    if (embedIfUsable && query && withChunks !== false) {
+    if (embedIfUsable() && query && withChunks !== false) {
       // embedding 服务故障 (超时/网关错误) 不应把调试端点打成 400:
       // 与 /api/context 同口径 —— 静默丢掉向量召回, 如实上报错误
       try {
-        const { hits: chunkHits } = await searchChunks(db, embedIfUsable, { query, chatId, topK: k });
+        const { hits: chunkHits } = await searchChunks(db, embedIfUsable(), { query, chatId, topK: k });
         out.chunkHits = chunkHits;
       } catch (err) {
         out.chunkError = err.message;
@@ -242,7 +245,7 @@ export function createRouter(db, { clients = null, llm = null, embed = null, ret
     const { query, chatId, characterId, topK, tokenBudget, digestMaxTokens, injectTables, injectStances, injectPending } = req.body ?? {};
     res.json({
       ok: true,
-      ...(await assembleContext(db, embedIfUsable, {
+      ...(await assembleContext(db, embedIfUsable(), {
         query, chatId, characterId,
         topK: Number(topK) || defaultTopK,
         tokenBudget: Number(tokenBudget) || defaultTokenBudget,
@@ -259,11 +262,14 @@ export function createRouter(db, { clients = null, llm = null, embed = null, ret
   // ---------- 述谓实例抽取 (V6: 谁—动词—谁 + 来源/时态/极性) ----------
   router.post('/api/extract', handleAsync(async (req, res) => {
     if (!c.llm) throw new Error('LLM 客户端未初始化');
-    const { chatId, text, sourceMessageIds, writeMemory } = req.body ?? {};
+    // characterName/userName: 身份锚定 (卡名并入别名 / 用户标 main 一等节点), 缺省不锚定
+    const { chatId, text, sourceMessageIds, writeMemory, characterName, userName } = req.body ?? {};
     res.json(await extractInstances(db, c.llm, {
       chatId, text,
       sourceMessageIds: sourceMessageIds ?? [],
       writeMemory: writeMemory !== false,
+      characterName: characterName ?? null,
+      userName: userName ?? null,
     }));
   }));
 
@@ -276,9 +282,9 @@ export function createRouter(db, { clients = null, llm = null, embed = null, ret
     } = req.body ?? {};
     let embeddingVec = null;
     let embeddingModel = null;
-    if (embedIfUsable && content) {
-      [embeddingVec] = await embedIfUsable.embed([content]);
-      embeddingModel = embedIfUsable.model;
+    if (embedIfUsable() && content) {
+      [embeddingVec] = await embedIfUsable().embed([content]);
+      embeddingModel = embedIfUsable().model;
     }
     const id = addChunk(db, {
       entityType, entityId, aspect, content,
