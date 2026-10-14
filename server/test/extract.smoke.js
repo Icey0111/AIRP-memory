@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 import { migrate, getSchemaVersion } from '../src/db/migrate.js';
 import { createLlmClient } from '../src/services/llmClient.js';
-import { extractInstances, SYSTEM_PROMPT } from '../src/services/extractionService.js';
+import { extractInstances, SYSTEM_PROMPT, parseJsonLoose } from '../src/services/extractionService.js';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -196,6 +196,15 @@ const r5 = await extractInstances(db, anchorLlm, {
 });
 const youAgain = db.prepare("SELECT * FROM people WHERE name='你'").get();
 check('person_type 保持 main 不回退', youAgain.person_type === 'main');
+
+console.log('\n--- parseJsonLoose 截断修复 (真实事故: 2048 输出上限掐断长批次, JSON 整步解析失败) ---');
+const repaired = parseJsonLoose(MOCK_LLM_JSON.slice(0, 1300));  // 掐断在数组中间
+check('截断输出修复出部分结果 (不整步报错)', Array.isArray(repaired.instances) && repaired.instances.length >= 1,
+  `instances=${repaired.instances?.length}`);
+check('修复结果的 people 结构完整', Array.isArray(repaired.people) && repaired.people.length >= 1);
+let threw = false;
+try { parseJsonLoose('{"a": [1, 2'); } catch { threw = true; }  // 连一个完整元素都没有, 修复不了
+check('修复不了时如实抛错 (不硬造数据)', threw);
 
 console.log(failures === 0 ? '\n全部通过' : `\n${failures} 项失败`);
 process.exit(failures === 0 ? 0 : 1);

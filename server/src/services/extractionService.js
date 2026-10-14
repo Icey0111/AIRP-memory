@@ -12,7 +12,7 @@
 //      否则不可逆的错误合并会发生 (§5.3)。
 import { createMemory } from './memoryService.js';
 import { alignPropositions } from './alignmentService.js';
-import { VERB_LAYER } from '../domain/constants.js';
+import { VERB_LAYER, LLM_LIMITS } from '../domain/constants.js';
 import {
   findOrCreatePerson, findOrCreateLocation, findOrCreateTimePoint,
   findEventByTitle, createEvent, addEventParticipant, addEventLink, addEntityRef,
@@ -132,6 +132,51 @@ function applyIdentityAnchors(db, people, { userName }) {
   }
 }
 
+/**
+ * 截断修复 (尽力而为): LLM 输出被 max_tokens 掐断时, 丢弃最后一个不完整元素后闭合括号。
+ * 只在原始解析失败时启用 —— 部分实例总比整步报错好 ("宁可这轮没对齐上, 也不能整批失败"同一哲学)。
+ * 修复不了 (连一个完整元素都没有 / 括号本就平衡但内容坏) 返回 null。
+ */
+function repairTruncatedJson(s) {
+  // 第一遍: 找最后一个栈内"完整元素边界" (栈非空时的逗号或闭合符)
+  let inStr = false, esc = false;
+  const stack = [];
+  let lastSafe = -1;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === '\\') esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') { inStr = true; continue; }
+    if (c === '{' || c === '[') stack.push(c);
+    else if (c === '}' || c === ']') { stack.pop(); lastSafe = i; }
+    else if (c === ',' && stack.length > 0) lastSafe = i;
+  }
+  if (inStr || stack.length === 0 || lastSafe < 0) return null;
+
+  let cut = s.slice(0, lastSafe + 1).replace(/,\s*$/, '');
+  // 第二遍: 重算未闭合括号, 逆序补齐
+  const open = [];
+  inStr = false; esc = false;
+  for (const c of cut) {
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === '\\') esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') { inStr = true; continue; }
+    if (c === '{' || c === '[') open.push(c);
+    else if (c === '}' || c === ']') open.pop();
+  }
+  if (inStr || open.length === 0) return null;
+  while (open.length) cut += open.pop() === '{' ? '}' : ']';
+  return cut;
+}
+
 // 容错解析: 剥代码围栏, 截取首个 { 到末个 } 之间内容
 // (三个抽取器共用: chunkExtractionService / stanceExtractionService 均从此导入)
 export function parseJsonLoose(raw) {
@@ -143,7 +188,21 @@ export function parseJsonLoose(raw) {
   if (start === -1 || end === -1 || end <= start) {
     throw new Error('LLM 返回中未找到 JSON 对象');
   }
-  return JSON.parse(s.slice(start, end + 1));
+  const body = s.slice(start, end + 1);
+  try {
+    return JSON.parse(body);
+  } catch (err) {
+    // 截断兜底: 末个 '}' 可能只是某个嵌套对象的闭合, 整体不完整 → 尝试修复
+    const repaired = repairTruncatedJson(body);
+    if (repaired === null) throw err;
+    try {
+      const data = JSON.parse(repaired);
+      console.warn('[extraction] LLM 输出疑似被 max_tokens 截断, 已修复并保留部分结果');
+      return data;
+    } catch {
+      throw err;
+    }
+  }
 }
 
 /**
@@ -161,7 +220,11 @@ export async function extractInstances(db, llm, {
   if (!text || !text.trim()) throw new Error('text 不能为空');
 
   const anchor = buildIdentityAnchor({ characterName, userName });
-  const raw = await llm.chat({ system: SYSTEM_PROMPT, user: anchor ? `${anchor}\n\n---\n\n${text}` : text });
+  const raw = await llm.chat({
+    system: SYSTEM_PROMPT,
+    user: anchor ? `${anchor}\n\n---\n\n${text}` : text,
+    maxTokens: LLM_LIMITS.extractionMaxTokens,
+  });
   const data = parseJsonLoose(raw);
 
   const result = db.transaction(() =>

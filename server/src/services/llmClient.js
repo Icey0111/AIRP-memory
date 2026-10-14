@@ -1,6 +1,7 @@
 // LLM 客户端: OpenAI 兼容协议 + mock 通道
 // 依赖注入设计: service 只依赖 { chat({system, user}) } 接口, 不绑定 provider
 // describe(): 自描述能力, 供 GET /api/meta 汇总对外呈现 (不外泄 apiKey)
+import { LLM_LIMITS } from '../domain/constants.js';
 
 export function createLlmClient(llmConfig) {
   // mock 通道: 离线开发/测试用, 直接返回配置的固定内容
@@ -36,7 +37,8 @@ export function createLlmClient(llmConfig) {
         reason: configured ? null : '未配置 baseUrl/apiKey/model',
       };
     },
-    async chat({ system, user, jsonMode = true }) {
+    // maxTokens 按调用可覆盖: 六要素抽取的输出体量远超网关默认 (截断=JSON 解析失败=整步丢弃)
+    async chat({ system, user, jsonMode = true, maxTokens = null }) {
       if (!configured) {
         throw new Error('llm 未配置完整 (baseUrl/apiKey/model), 请编辑 server/config.json');
       }
@@ -56,7 +58,7 @@ export function createLlmClient(llmConfig) {
               { role: 'user', content: user },
             ],
             temperature: llmConfig.temperature ?? 0.3,
-            max_tokens: llmConfig.maxTokens ?? 2048,
+            max_tokens: maxTokens ?? llmConfig.maxTokens ?? LLM_LIMITS.chatMaxTokens,
             ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
           }),
           signal: controller.signal,

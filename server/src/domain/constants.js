@@ -78,6 +78,14 @@ export const STANCE_TYPE_SUGGESTIONS = [
 /** 观察块默认值 */
 export const CHUNK_DEFAULTS = { importance: 0.5 };
 
+// LLM 输出配额 (2026-10-14 实测: 六要素 schema 冗长, 9 条消息的输出在 2048 被掐断 → JSON 解析整步失败)
+export const LLM_LIMITS = {
+  /** 未显式配置时 llmClient 的 max_tokens 缺省 (替代旧的硬编码 2048) */
+  chatMaxTokens: 8192,
+  /** 述谓实例抽取按调用覆盖的输出上限 (V6 prompt 的 instances/comp/conditional 结构输出体量大) */
+  extractionMaxTokens: 8192,
+};
+
 /** 立场默认值 (表里如一 / 公开 / 对方知情 的缺省) */
 export const STANCE_DEFAULTS = {
   intensity: 0.5,
