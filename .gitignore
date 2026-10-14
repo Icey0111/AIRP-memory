@@ -21,3 +21,7 @@ npm-debug.log*
 .idea/
 .DS_Store
 Thumbs.db
+
+# .sim 运行产物 (工具脚本入库, 产物不入库)
+.sim/*.png
+.sim/injection-live.txt
