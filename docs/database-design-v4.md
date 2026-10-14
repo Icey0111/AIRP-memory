@@ -107,3 +107,35 @@ SELECT ... WHERE target_id=? AND stance_type='敌对'
 后续版本只碰**实现层**（写入管线、检索打分、遗忘衰减），数据结构不再新增——除非出现真实需求倒逼，且一律走迁移脚本增量演进。
 
 迁移链：`001_v1_to_v2 → 002_v2_to_v3 → 003_v3_to_v4 → 004_v4_to_v5`，全链实测通过。
+
+---
+
+## V5 → V9 增量（均属"真实需求倒逼"的实现层演进，不新增表）
+
+| 版本 | 迁移 | 加的东西 | 倒逼它的真实问题 |
+|---|---|---|---|
+| V5→V6 | 005 | events 动词槽与命题三轴（verb_type/verb_surface/polarity/source_type/source_person_id/attitude/tense/status/aligned_instance_id/parent_*） | "艾拉说明天去镇上"被抽成既成事实（把意图写成事实） |
+| V6→V7 | 006 | stances 加 `stance_dimension` + `confirms` | 同槽位值变化是迁移还是并存，原先无从区分 |
+| V7→V8 | 007 | attribute_chunks 加 `confirms` + `supersede_similarity` | 重复观察堆出一长串同值行（伪迁移） |
+| **V8→V9** | **008** | **events 加 `label` + `confirms`，判等键带上来源窗口** | **事件被静默吞并（数据丢失）** |
+
+### V9 详解：判等键为什么必须带来源窗口
+
+events 的幂等判据长期是"同 chat 同 title"，而 title 曾被写成实例 label
+（`title = label || verbSurface || verbType`）。合并抽取**每个窗口都从 e1 开始编号**，
+于是第二段剧情里同样叫 e1 的实例被判"已存在" → 整条事件被静默丢弃。
+2026-10-14 真实模型实测：窗口 1（艾拉出门）落 2 条，窗口 2（铁匠放剑）落 **0 条**。
+
+修正后的判等键（`findEventForRestatement`）：
+
+```
+① title 相同 且 时间点相同        —— 描述性标题本身是内容, 跨窗口可比
+② label 相同 且 来源窗口相同      —— label 是一次输出内的临时编号, 出了窗口就没有意义
+③ 命中的含义是重述: 不新增行, confirms + 1 (与属性层/立场层对称)
+```
+
+同时 `title` 与 `label` **分列存**：描述性标题不再被 "e1" 顶掉
+（历史数据按旧口径回填 `label = title`，旧库零漂移）。
+
+**前提条件（不可省）**：判等只在实例**带 label** 时进行 —— 无 label 时 title 会回落到
+动词（verbSurface/verbType），多条从句可能同为"去"，一判等就互相吞并（这条旧代码早已写明）。

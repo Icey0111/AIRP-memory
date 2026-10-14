@@ -34,31 +34,33 @@ migrate(db, path.join(projectRoot, 'db'), () => {});
 console.log(`schema_version = ${getSchemaVersion(db)}`);
 
 console.log('\n--- ① 取值元素: find-or-create / 别名归并 / 域隔离 ---');
-const trust = findOrCreateValue(db, { name: '信任', kind: 'stance_type' });
+// ⚠️ V10 起种子词表 (信任/戒备/亲近…) 在 migrate 时就已灌入, 所以本段用**词表外**的词,
+// 测的才是 valueService 自己的语义 (find-or-create 与显式别名归并), 而不是种子表
+const trust = findOrCreateValue(db, { name: '倚重', kind: 'stance_type' });
 check('首次出现 => created=true (这是"建立", 不是迁移)',
   trust.created === true && trust.existed === false, JSON.stringify(trust));
-const trustAgain = findOrCreateValue(db, { name: '信任', kind: 'stance_type' });
+const trustAgain = findOrCreateValue(db, { name: '倚重', kind: 'stance_type' });
 check('再次出现 => 复用同一元素 (created=false)', trustAgain.id === trust.id && trustAgain.created === false);
-const byAlias = findOrCreateValue(db, { name: '信赖', aliases: [], kind: 'stance_type' });
+const byAlias = findOrCreateValue(db, { name: '倚赖', aliases: [], kind: 'stance_type' });
 check('未登记的写法是**另一个元素** (指向不同文本 = 没指向同一元素)',
   byAlias.id !== trust.id, `${trust.id} vs ${byAlias.id}`);
 
-const merged = findOrCreateValue(db, { name: '信任', aliases: ['信赖', '信服'], kind: 'stance_type' });
+const merged = findOrCreateValue(db, { name: '倚重', aliases: ['倚赖', '器重'], kind: 'stance_type' });
 check('显式给出别名 => 归并进同一元素',
-  merged.id === trust.id && JSON.parse(merged.aliases).includes('信赖'), merged.aliases);
-check('归并后按别名也能查到', findValue(db, { name: '信服', kind: 'stance_type' })?.id === trust.id);
+  merged.id === trust.id && JSON.parse(merged.aliases).includes('倚赖'), merged.aliases);
+check('归并后按别名也能查到', findValue(db, { name: '器重', kind: 'stance_type' })?.id === trust.id);
 
-const guarded = findOrCreateValue(db, { name: '信任', aliases: ['托付'], kind: 'stance_type', mergeAliases: false });
+const guarded = findOrCreateValue(db, { name: '倚重', aliases: ['嘱托'], kind: 'stance_type', mergeAliases: false });
 check('mergeAliases=false => 只查不并 (归属语境下的安全用法)',
-  !JSON.parse(guarded.aliases).includes('托付'), guarded.aliases);
+  !JSON.parse(guarded.aliases).includes('嘱托'), guarded.aliases);
 check('宁可不并: 未显式声明的写法保持为独立元素',
-  findValue(db, { name: '托付', kind: 'stance_type' }) === null);
+  findValue(db, { name: '嘱托', kind: 'stance_type' }) === null);
 
-const sameNameOtherKind = findOrCreateValue(db, { name: '信任', kind: 'aspect' });
+const sameNameOtherKind = findOrCreateValue(db, { name: '倚重', kind: 'aspect' });
 check('同名不同域 => 两个元素 (跨域不同语义)',
   sameNameOtherKind.id !== trust.id && sameNameOtherKind.created === true);
 
-const child = findOrCreateValue(db, { name: '亲近', kind: 'stance_type', parentName: '信任' });
+const child = findOrCreateValue(db, { name: '倚势', kind: 'stance_type', parentName: '信任' });
 check('校验不了父子关系时仍可建 (parent 只作层级提示, 不影响指针)',
   child.id !== trust.id && child.parent_id != null, JSON.stringify(child));
 

@@ -29,10 +29,10 @@ db.pragma('foreign_keys = ON');
 migrate(db, path.join(projectRoot, 'db'), () => {});
 console.log(`schema_version = ${getSchemaVersion(db)}`);
 
-/** 造一条摘要记忆; floors 决定覆盖区间 */
-function addSummary({ chatId, content, from, to, importance = 0.6 }) {
+/** 造一条摘要记忆; floors 决定覆盖区间。prefix=true 时用旧版扩展的 `floor-N` 写法 */
+function addSummary({ chatId, content, from, to, importance = 0.6, prefix = false }) {
   const ids = [];
-  for (let i = from; i <= to; i++) ids.push(String(i));
+  for (let i = from; i <= to; i++) ids.push(prefix ? `floor-${i}` : String(i));
   return createMemory(db, {
     type: 'summary', content, scope: 'chat', chatId,
     sourceMessageIds: ids, importance, tags: ['summary'],
@@ -54,10 +54,22 @@ check('按楼层先后排列, 最早在前',
   d1.text.indexOf('第一段剧情') < d1.text.indexOf('第二段剧情')
   && d1.text.indexOf('第二段剧情') < d1.text.indexOf('第三段剧情'));
 check(`段落带 ${DIGEST_FORMAT.header} 头`, d1.text.startsWith(HEADER), d1.text.slice(0, 30));
-check('每行行首是覆盖的楼层区间 (供模型定位时序)',
-  d1.text.includes('[0-9]') && d1.text.includes('[20-29]'), d1.text.slice(0, 80));
+check('每行行首是 绝对时间 + 覆盖的楼层区间 (供模型定位时序)',
+  /\d{2}月\d{2}日星期. \d{2}:\d{2} · 0-9\]/.test(d1.text) && d1.text.includes('· 20-29]'),
+  d1.text.slice(0, 120));
+// V10: 摘要没有剧情时间时, 用写入时间做**近似**绝对时间戳, 并如实标"约"
+// V10 严格时间口径: 行首时间一律是精确时间戳, 不写"约/推断"这类模糊措辞
+check('行首时间不含任何模糊措辞 (没有"约", 也没有剧情标签)',
+  !d1.text.includes('约 ') && !d1.text.includes('夜里') && !d1.text.includes('第三夜'),
+  d1.text.slice(0, 120));
 check('上报整体覆盖区间', d1.fromFloor === 0 && d1.toFloor === 29,
   JSON.stringify({ from: d1.fromFloor, to: d1.toFloor }));
+// V10 修的真实 bug: 旧版扩展把楼层写成 "floor-N", 只认纯数字会让 [起-止] 静默消失 (真库如此)
+addSummary({ chatId: 'c1-legacy', content: '旧版写法', from: 2, to: 4, prefix: true });
+const dLegacy = buildDigest(db, { chatId: 'c1-legacy' });
+check('旧版 floor-N 写法的覆盖区间照样解析出来 (真库就是这种)',
+  dLegacy.fromFloor === 2 && dLegacy.toFloor === 4 && dLegacy.text.includes('· 2-4]'),
+  `${dLegacy.fromFloor}-${dLegacy.toFloor} :: ${dLegacy.text}`);
 check('ids 与写入顺序一致', d1.ids.length === 3 && d1.ids.every((x, i) => i === 0 || x > d1.ids[i - 1]));
 
 // ===============================================================

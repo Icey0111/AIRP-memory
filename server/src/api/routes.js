@@ -1,5 +1,5 @@
 // API 路由: /health /api/status /api/memories /api/profiles /api/retrieve /api/context
-//           /api/extract /api/chunks /api/extract-attributes /api/profiles-derive
+//           /api/extract /api/observe /api/chunks /api/extract-attributes /api/profiles-derive
 //           /api/stances /api/extract-stances /api/forget /api/forget/restore
 import { Router } from 'express';
 import { getSchemaVersion, LATEST_SCHEMA_VERSION } from '../db/migrate.js';
@@ -16,9 +16,11 @@ import { extractAttributes, deriveProfile } from '../services/chunkExtractionSer
 import { addStance, listStances, softDeleteStance, stanceOverview } from '../services/stanceService.js';
 import { slotSummary } from '../services/slotService.js';
 import { extractStances } from '../services/stanceExtractionService.js';
+import { observeText } from '../services/observeService.js';
 import { summarizeConversation } from '../services/summaryService.js';
 import { runForgetTask, restoreForgotten } from '../services/forgetService.js';
 import { buildDigest } from '../services/digestService.js';
+import { projectGraph } from '../services/graphProjection.js';
 import { RETRIEVAL_FALLBACK_DEFAULTS, FORGET_SCORING, SUMMARY_MEMORY_TYPE } from '../domain/constants.js';
 import { buildMeta } from './meta.js';
 
@@ -273,6 +275,22 @@ export function createRouter(db, { clients = null, llm = null, embed = null, ret
     }));
   }));
 
+  // ---------- 组合抽取 (三段一次跑完) ----------
+  // 顺序与"共享同一文本/同一来源楼层"的不变式都在 observeService 里保证;
+  // 这里只做参数透传。embedding 走与其他端点同一套可用性判定 (embedIfUsable)。
+  router.post('/api/observe', handleAsync(async (req, res) => {
+    const { chatId, text, sourceMessageIds, characterName, userName, writeMemory, steps } = req.body ?? {};
+    res.json(await observeText(db, { llm: c.llm, embed: embedIfUsable() }, {
+      chatId,
+      text,
+      sourceMessageIds: sourceMessageIds ?? [],
+      characterName: characterName ?? null,
+      userName: userName ?? null,
+      writeMemory: writeMemory !== false,
+      steps: steps ?? null,
+    }));
+  }));
+
   // ---------- 三阶属性观察块 ----------
   // 手动写入 (embed 可用时自动补向量; 未配置则静默降级 embedded:false)
   router.post('/api/chunks', handleAsync(async (req, res) => {
@@ -411,6 +429,14 @@ export function createRouter(db, { clients = null, llm = null, embed = null, ret
   // 槽位与状态迁移 (V7): 当前指针值 + 从 supersedes 链推导的迁移序列
   router.get('/api/slots', handle((req, res) => {
     res.json({ ok: true, ...slotSummary(db, { chatId: req.query.chatId ?? null }) });
+  }));
+
+  // 记忆网络图投影 (可视化窗口 GET /graph 的数据源; 只读, 不进 ENDPOINTS 契约 ——
+  // 它不参与注入/抽取语义, 前端契约也不消费它, 列进去只会扩大 check-contract 的面)
+  router.get('/api/graph', handle((req, res) => {
+    const chatId = req.query.chatId ? String(req.query.chatId) : null;
+    const withObservations = req.query.observations !== '0';
+    res.json(projectGraph(db, { chatId, withObservations }));
   }));
 
   // 软删除

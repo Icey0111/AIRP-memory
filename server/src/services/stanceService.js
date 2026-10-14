@@ -11,7 +11,7 @@
 //   强度变化属于同一值的幅度微调, 只更新行, 不产生迁移。
 import { now, clamp01 } from '../utils/text.js';
 import { STANCE_DEFAULTS, SLOT_MODEL, INJECTION_TABLES } from '../domain/constants.js';
-import { findOrCreateValue } from './valueService.js';
+import { ensureVocabulary } from './vocabularyService.js';
 
 // 当前生效过滤 (SQL 片段)
 const CURRENT = `
@@ -60,8 +60,11 @@ export function applyStance(db, {
   if (!stanceType) throw new Error('stanceType 必填');
   if (!chatId) throw new Error('chatId 必填');
 
-  // 取值元素: 元素先于指针 —— 值本身也是网络里的节点 (§16.4)
-  const value = findOrCreateValue(db, { name: stanceType, kind: 'stance_type' });
+  // 取值元素: 元素先于指针 —— 值本身也是网络里的节点 (§16.4)。
+  // V10: 而且**先归一**(敌对→敌视): 槽位判等用归一后的值, 否则"敌对"与"敌视"会被当成
+  // 两次迁移, 立场演化链上凭空多出一跳。
+  const valueEl = ensureVocabulary(db, 'stance_type', stanceType);
+  const valueWord = valueEl ? valueEl.word : stanceType;
 
   const ts = now();
   const slot = currentSlotStance(db, {
@@ -69,7 +72,7 @@ export function applyStance(db, {
   });
 
   // 确认: 槽位当前值与新值相同 -> 不新增行, 只更新幅度并累加确认计数
-  if (slot && slot.stance_type === stanceType) {
+  if (slot && slot.stance_type === valueWord) {
     db.prepare(`
       UPDATE stances
       SET intensity = ?, displayed_type = ?, is_public = ?, target_aware = ?, basis = ?,
@@ -82,7 +85,7 @@ export function applyStance(db, {
     );
     return {
       id: slot.id, operation: 'confirm', from: slot.id,
-      fromValue: slot.stance_type, value: stanceType, valueCreated: value.created,
+      fromValue: slot.stance_type, value: valueWord, valueCreated: valueEl?.created ?? false,
     };
   }
 
@@ -91,14 +94,14 @@ export function applyStance(db, {
   const info = db.prepare(`
     INSERT INTO stances
       (holder_type, holder_id, target_type, target_id,
-       stance_type, intensity, displayed_type, is_public, target_aware, basis,
+       stance_type, stance_type_id, intensity, displayed_type, is_public, target_aware, basis,
        valid_from_event_id, valid_to_event_id, supersedes_stance_id,
        chat_id, memory_id, source_message_ids, importance, stance_dimension,
        created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     holderType, holderId, targetType, targetId,
-    stanceType, clamp01(intensity),
+    valueWord, valueEl?.id ?? null, clamp01(intensity),
     displayedType, isPublic ? 1 : 0, targetAware ? 1 : 0, basis,
     validFromEventId, validToEventId, predecessor,
     chatId, memoryId, JSON.stringify(sourceMessageIds), clamp01(importance), dimension,
@@ -109,8 +112,8 @@ export function applyStance(db, {
     operation: slot ? 'migrate' : 'create',
     from: predecessor,
     fromValue: slot?.stance_type ?? null,
-    value: stanceType,
-    valueCreated: value.created,
+    value: valueWord,
+    valueCreated: valueEl?.created ?? false,
   };
 }
 

@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS meta (
     value TEXT NOT NULL
 );
 
-INSERT INTO meta (key, value) VALUES ('schema_version', '8')
+INSERT INTO meta (key, value) VALUES ('schema_version', '10')
 ON CONFLICT (key) DO UPDATE SET value = '7';
 
 -- ------------------------------------------------------------
@@ -230,13 +230,20 @@ CREATE INDEX IF NOT EXISTS idx_locations_parent ON locations (parent_id);
 CREATE TABLE IF NOT EXISTS time_points (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     chat_id    TEXT NOT NULL,
-    label      TEXT NOT NULL,                       -- 如 "第三夜, 暴雨"
+    label      TEXT NOT NULL,                       -- 如 "第三夜, 暴雨" (世界内时刻的名字)
     seq        INTEGER NOT NULL DEFAULT 0,          -- 时间线内排序, 越大越晚
-    parent_id  INTEGER REFERENCES time_points (id) ON DELETE SET NULL,
-    note       TEXT NOT NULL DEFAULT '',
+    parent_id  INTEGER REFERENCES time_points (id) ON DELETE SET NULL,   -- 章节层级 (V10 起真的会填)
+    note       TEXT NOT NULL DEFAULT '',            -- 修饰语/原始整句 (从 label 拆出来的部分)
+    -- V10: 时段指针 (docs/vocabulary-layer.md) —— 时间点保留各自的身份 (UNIQUE(chat_id,label)),
+    -- 抽象层是**时段元素** (昼/夜/黄昏…): 于是"所有夜间发生的事"一跳即达,
+    -- 而两个不同的夜晚绝不会因为归一被并成一个时刻。
+    -- 注意这是**指针-only**域: label 不是归一后的词, 所以它没有文本缓存、也不参与漂移检查。
+    period_id  INTEGER REFERENCES value_nodes (id) ON DELETE SET NULL,
     created_at INTEGER NOT NULL,
     UNIQUE (chat_id, label)
 );
+
+CREATE INDEX IF NOT EXISTS idx_time_points_period ON time_points (period_id);
 
 CREATE INDEX IF NOT EXISTS idx_time_points_chat_seq
     ON time_points (chat_id, seq);
@@ -284,6 +291,25 @@ CREATE TABLE IF NOT EXISTS events (
     parent_instance_id  INTEGER REFERENCES events (id) ON DELETE CASCADE,
     parent_role       TEXT,
 
+    -- ---- V10: 词表指针 (docs/vocabulary-layer.md) ----
+    -- 语义不再是随手写的字符串, 而是指向取值元素 (value_nodes) 的指针。
+    -- 为什么这不是洁癖: 对齐的硬条件是"同动词"(VERB_LAYER.alignment), 谓词不成词表
+    -- 则从句与事实永远不同动词 => 真假判定一次都不会生效 (实测 10 条命题 0 条判定)。
+    -- 上面那些 *_type / status / attitude 文本列保留为**归一后的词**(缓存), 写入路径同时写两处,
+    -- 由 test/vocabulary.smoke.js 钉住不漂移 —— 注入/检索/冻结区因此零改动。
+    predicate_id      INTEGER REFERENCES value_nodes (id) ON DELETE SET NULL,
+    attitude_id       INTEGER REFERENCES value_nodes (id) ON DELETE SET NULL,
+    clause_id         INTEGER REFERENCES value_nodes (id) ON DELETE SET NULL,
+    status_id         INTEGER REFERENCES value_nodes (id) ON DELETE SET NULL,
+
+    -- ---- V9: 实例标签与重述计数 ----
+    -- label 是模型在**一次输出内**的临时编号(如 e1), 用于同窗口内的引用解析与
+    -- 重述判等; 它**不是跨窗口的身份** —— 判等必须带上 source_message_ids,
+    -- 否则不同剧情里同样编号的 e1 会互相吞并(实测数据丢失)。
+    label             TEXT,
+    -- 同一来源窗口内被重复抽取的次数 (重述不新增行, 只计数; 与属性层/立场层对称)
+    confirms          INTEGER NOT NULL DEFAULT 0,
+
     -- 作用域: 事件总是发生在某条聊天/分支里
     chat_id           TEXT NOT NULL,
 
@@ -303,6 +329,7 @@ CREATE TABLE IF NOT EXISTS events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_chat       ON events (chat_id, is_active);
+CREATE INDEX IF NOT EXISTS idx_events_chat_label ON events (chat_id, label);
 CREATE INDEX IF NOT EXISTS idx_events_time       ON events (time_id);
 CREATE INDEX IF NOT EXISTS idx_events_location   ON events (location_id);
 CREATE INDEX IF NOT EXISTS idx_events_importance ON events (importance DESC);
@@ -312,6 +339,11 @@ CREATE INDEX IF NOT EXISTS idx_events_status  ON events (status, chat_id);
 CREATE INDEX IF NOT EXISTS idx_events_source  ON events (source_type);
 CREATE INDEX IF NOT EXISTS idx_events_parent  ON events (parent_instance_id);
 CREATE INDEX IF NOT EXISTS idx_events_aligned ON events (aligned_instance_id);
+-- V10: 词表指针的查询路径 ("这个谓词被哪些实例用"是复用度统计的热路径)
+CREATE INDEX IF NOT EXISTS idx_events_predicate ON events (predicate_id);
+CREATE INDEX IF NOT EXISTS idx_events_attitude  ON events (attitude_id);
+CREATE INDEX IF NOT EXISTS idx_events_clause    ON events (clause_id);
+CREATE INDEX IF NOT EXISTS idx_events_status_id ON events (status_id);
 
 -- ------------------------------------------------------------
 -- event_participants: 事件-人物参与关系 (多对多, 带角色)
@@ -321,11 +353,16 @@ CREATE TABLE IF NOT EXISTS event_participants (
     event_id  INTEGER NOT NULL REFERENCES events (id) ON DELETE CASCADE,
     person_id INTEGER NOT NULL REFERENCES people (id) ON DELETE CASCADE,
     role      TEXT NOT NULL DEFAULT '参与者',
+    -- V10: 题元角色的词表指针 (role 保留为归一后的词)。归一之后, 同一个人在同一实例上
+    -- 的重复角色 (agent 与 发起者 并存) 会被主键自然去重 —— 旧口径下它们是两行。
+    role_id   INTEGER REFERENCES value_nodes (id) ON DELETE SET NULL,
     PRIMARY KEY (event_id, person_id, role)
 );
 
 CREATE INDEX IF NOT EXISTS idx_event_participants_person
     ON event_participants (person_id);
+CREATE INDEX IF NOT EXISTS idx_event_participants_role
+    ON event_participants (role_id);
 
 -- ------------------------------------------------------------
 -- event_links: 事件间有向关系 (因果链)
@@ -386,8 +423,9 @@ CREATE TABLE IF NOT EXISTS attribute_chunks (
     entity_id      INTEGER NOT NULL,
 
     -- 维度: personality/appearance/speech/habit/relationship/scene/atmosphere...
-    -- 不做 CHECK 约束, 保持可扩展, 建议值见设计文档
+    -- V10: 不做 CHECK, 但必须有词表指针 —— 取值域见 ASPECT_SUGGESTIONS (kind='aspect')
     aspect         TEXT NOT NULL,
+    aspect_id      INTEGER REFERENCES value_nodes (id) ON DELETE SET NULL,
 
     -- 原文观察, 一字不删; embedding 只是它的检索指纹
     content        TEXT NOT NULL,
@@ -424,6 +462,7 @@ CREATE TABLE IF NOT EXISTS attribute_chunks (
 CREATE INDEX IF NOT EXISTS idx_chunks_entity
     ON attribute_chunks (entity_type, entity_id, is_active);
 CREATE INDEX IF NOT EXISTS idx_chunks_aspect  ON attribute_chunks (aspect);
+CREATE INDEX IF NOT EXISTS idx_chunks_aspect_id ON attribute_chunks (aspect_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_chat    ON attribute_chunks (chat_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_valid   ON attribute_chunks (valid_to_event_id);
 
@@ -481,6 +520,7 @@ CREATE TABLE IF NOT EXISTS stances (
 
     -- 一阶: 立场类型 + 程度
     stance_type   TEXT NOT NULL,                 -- 信任/戒备/敌对/友好/爱慕/忠诚/敬畏/轻蔑..., 不锁死
+    stance_type_id INTEGER REFERENCES value_nodes (id) ON DELETE SET NULL,   -- V10: 词表指针 (kind='stance_type')
     intensity     REAL NOT NULL DEFAULT 0.5
                   CHECK (intensity BETWEEN 0 AND 1),
 
@@ -522,6 +562,8 @@ CREATE INDEX IF NOT EXISTS idx_stances_target
     ON stances (target_type, target_id);
 CREATE INDEX IF NOT EXISTS idx_stances_valid
     ON stances (valid_to_event_id);
+CREATE INDEX IF NOT EXISTS idx_stances_type_id
+    ON stances (stance_type_id);
 -- V7: 槽位查找路径 (chat, holder, target, dimension)
 CREATE INDEX IF NOT EXISTS idx_stances_slot
     ON stances (chat_id, holder_type, holder_id, target_type, target_id, stance_dimension);
@@ -546,6 +588,13 @@ CREATE TABLE IF NOT EXISTS value_nodes (
     aliases    TEXT NOT NULL DEFAULT '[]',      -- JSON 数组, 与 people / locations 同口径
     kind       TEXT NOT NULL DEFAULT '',
     parent_id  INTEGER REFERENCES value_nodes (id) ON DELETE SET NULL,
+    -- ---- V10: 词表元素的自我描述 (docs/vocabulary-layer.md) ----
+    --   source: seed=种子词表(来自 constants) / extracted=抽取时新造 / merged=被归并后停用
+    --   status: ok / needs_review —— **词表外的新词不丢弃, 进待审队列** (宁可不并)
+    gloss      TEXT NOT NULL DEFAULT '',
+    source     TEXT NOT NULL DEFAULT 'seed',
+    status     TEXT NOT NULL DEFAULT 'ok',
+    note       TEXT NOT NULL DEFAULT '',
     is_active  INTEGER NOT NULL DEFAULT 1,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
@@ -553,6 +602,8 @@ CREATE TABLE IF NOT EXISTS value_nodes (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_value_nodes_name ON value_nodes (name, kind);
 CREATE INDEX IF NOT EXISTS idx_value_nodes_parent ON value_nodes (parent_id);
+-- V10: 待审队列的查询路径 (面板/CLI 要看"哪些词还没归一")
+CREATE INDEX IF NOT EXISTS idx_value_nodes_status ON value_nodes (kind, status, is_active);
 
 -- ------------------------------------------------------------
 -- 视图隔离: 事实层与命题层共用 events 表, 由视图分路

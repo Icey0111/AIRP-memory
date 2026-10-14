@@ -1,4 +1,5 @@
-// 一次性静态一致性检查: settings.html 的 id 与 src/ui.js 的选择器/步骤开关是否对得上
+// 冻结守卫 (酒馆前端 2026-10-14 冻结): settings.html 的 id 与 src/ui.js 的选择器/步骤开关是否对得上。
+// 冻结区不再演进, 但只要后端契约变了它就可能坏 —— 这个检查是"没人天天用它"时唯一的探针。
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

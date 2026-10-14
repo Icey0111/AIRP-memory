@@ -1,0 +1,87 @@
+# ============================================================================
+# AIRP 角色扮演预设（preset body）—— 仓库内本文件是唯一真源
+# 由 dsh/sync-profiles.mjs 生成到各 profile 的 cordis.patch.yml：
+#   ~/.dsh/profiles/airp/      (AIRP 专属 Web profile：默认就用它)
+#   ~/.dsh/profiles/desktop/   (桌面端：作为下拉里一个可选项，默认仍是标准模式)
+# 生成块带 ↓AIRP-PRESET 分隔标记，脚本只重写该块，不碰 profile 自己的条目。
+#
+# 设计三原则:
+#   ① 人设归角色卡, 不归 harness
+#   ② 写入只能走记忆 MCP 工具 —— 预德里不放 bash/pwsh, 用能力缺省而非口头纪律
+#   ③ 纪律自动在场 —— AIRP.md 每轮注入, 不赌模型自觉
+#
+# 重要: mcp 挂在**预设内部**, 所以原版会话连这 13 个工具都不会出现(零污染)。
+# ============================================================================
+- insert:
+    - id: preset-airp-roleplay
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: airp-roleplay
+        name: AIRP 角色扮演
+        description: '角色扮演专用: 记忆工具 + 纪律通道, 不带编码工具'
+        order: 4
+        plugins:
+          # (a) 记忆 MCP: 13 个 memory_* 工具, 只在用本预设的会话里生效
+          - id: mcp-airp
+            name: '@deepseek-ai/dsh-mcp-client'
+            config:
+              serverName: airp
+              transport: stdio
+              # 绝对路径: dsh 拉 MCP 子进程时的环境不一定继承 shell 的 PATH
+              command: C:/Program Files/nodejs/node.exe
+              args: ['mcp/index.mjs']
+              cwd: E:/记忆系统/server
+              env:
+                AIRP_SERVER_URL: http://127.0.0.1:7780
+              # 记忆服务没起时 harness 照常启动, 只是调用返回友好错误
+              failOnStartupError: false
+              toolCallTimeoutMs: 180000
+          # (b) 人设: RP 基调。不用 complete:true —— 角色卡/用户设定仍能进来
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              includeRuntimeContext: false
+              prefix: >-
+                你正在一个持续的角色扮演场景中。你扮演当前角色卡所定义的角色，
+                严格保持其人设、语气、说话习惯、称呼方式与已知经历，不跳出角色，
+                不用助手口吻解释、总结或点评剧情。
+                对话中出现的记忆是你本就记得的事，直接当经验使用。
+              # suffix 由 sync-profiles.mjs 从 AIRP.md 现填 (见 @@AIRP_DISCIPLINE@@):
+              # 纪律必须是 **system prompt 里的常驻文本**, 不能只靠工作区里的 AIRP.md ——
+              # agent-instructions 只在工作区根找文件, 而实测用户常在别的工作区玩 (临时/色彩),
+              # 那时纪律文件根本不存在, 模型就退回"凭自觉"(实测: 三轮只织了一次, chatId 用 default)。
+              suffix: "@@AIRP_DISCIPLINE@@"
+          # (c) 每轮纪律: AIRP.md 自动注入
+          - id: agent-instructions
+            name: '@deepseek-ai/dsh-agent-instructions'
+            config:
+              maxBytes: 65536
+              # 只认 AIRP.md: 原版的 AGENTS.md/CLAUDE.md 不会进本预设
+              instructionFileCandidates: ['AIRP.md']
+          # (d) 只读文件: 读角色卡/设定/记忆投影; 写路径只有记忆 MCP 工具
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+          # (e) 纪律手册: 详细 playbook 按需加载
+          - id: skill-filesystem
+            name: '@deepseek-ai/dsh-skill-filesystem'
+            config:
+              includeDefaultRoots: false
+              customSkillDirs: [E:/记忆系统/skills]
+          - id: tool-skill
+            name: '@deepseek-ai/dsh-tool-skill'
+          # (f) 受控压缩: 只做窗口管理, 语义沉淀交给 memory_summarize
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate: { compaction: true, toolResultPruner: true }
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
+                config:
+                  # 只在接近上下文上限时才压, 别抢在 memory_summarize 之前吃掉原文
+                  thresholdRatio: 0.85
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
+              - id: tool-result-pruner
+                name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+                config: { thresholdChars: 8192, headChars: 4096, tailChars: 1024 }

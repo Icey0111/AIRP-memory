@@ -192,9 +192,11 @@ upsert 语义：同 (category, key) 覆盖。
 ```json
 {
   "ok": true,
-  "text": "【角色画像】\n…\n\n【关键实体】\n…\n\n【事件时间线】\n…\n\n【待兑现】\n- 信使说：带主角去北门（未决 · 第九夜）\n\n【相关记忆】\n…",
+  "text": "【当前时间】2026年10月14日星期三 21:49\n\n【角色画像】\n…\n\n【前情提要】\n[2026年10月14日星期三 21:28 · 2-4] 国门盘查：…\n\n【事件时间线】\n…\n\n【待兑现】\n- 信使说：带主角去北门（未决 · 2026年10月14日星期三 21:49）\n\n【相关记忆】\n…",
   "injectionMode": "tables",
   "usedTokens": 412, "tokenBudget": 1200,
+  "clockAt": 1791985754, "clockInferred": true,
+  "clockText": "【当前时间】2026年10月14日星期三 21:49",
   "profileCount": 2, "stanceCount": 3, "entityCount": 5,
   "timelineCount": 8, "propositionRows": 1,
   "pendingCount": 1, "pendingTotal": 2, "pendingTokens": 40, "pendingDropped": 1, "pendingEnabled": true,
@@ -204,20 +206,21 @@ upsert 语义：同 (category, key) 覆盖。
 }
 ```
 
-`text` 直接拼进 prompt 即可。段落顺序与 `meta.contextSections` 同源（V6 起为 8 段）：
+`text` 直接拼进 prompt 即可。段落顺序与 `meta.contextSections` 同源（V10 起为 9 段）：
 
 | # | 段 | 填充方式 | 预算 |
 |---|---|---|---|
-| 1 | 角色画像 | 常驻（表格） | 自有 |
-| 2 | 关系立场 | 常驻（表格，可关） | 自有 |
-| 3 | 关键实体 | 常驻限量（表格） | 自有 |
-| 4 | 前情提要 | 常驻，按楼层顺序拼接的摘要链 | `digestMaxTokens` |
-| 5 | 事件时间线 | 常驻限量；**归属声称带来源口吻与定局标记**（`信使说：…（已被拆穿）`） | 自有 |
-| 6 | **待兑现** | 常驻限量；未决命题（承诺/约定/威胁/线索），**空则不出段**，可关 | 自有 |
-| 7 | 相关记忆 | FTS 召回，**已排除摘要**，按打分填 `tokenBudget` | `tokenBudget` |
-| 8 | 相关细节 | 向量召回的观察块，填剩余 `tokenBudget` | 同上 |
+| 1 | 当前时间 | 常驻（一行）；**只放精确时间戳**（`2026年10月14日星期三 21:49`），基准是最近一条记录的写入时间，来源差异只经 `clockInferred` 上报、不进 prompt | 不计预算 |
+| 2 | 角色画像 | 常驻（表格） | 自有 |
+| 3 | 关系立场 | 常驻（表格，可关） | 自有 |
+| 4 | 关键实体 | 常驻限量（表格） | 自有 |
+| 5 | 前情提要 | 常驻，按楼层顺序拼接的摘要链；行首 `[精确时间戳 · 起-止]` | `digestMaxTokens` |
+| 6 | 事件时间线 | 常驻限量；时间列是精确时间戳（同一节点只出现一次）；**归属声称带来源口吻与定局标记**（`信使说：…（已被拆穿）`） | 自有 |
+| 7 | **待兑现** | 常驻限量；未决命题（承诺/约定/威胁/线索），时间锚为精确时间戳，**空则不出段**，可关 | 自有 |
+| 8 | 相关记忆 | FTS 召回，**已排除摘要**，按打分填 `tokenBudget` | `tokenBudget` |
+| 9 | 相关细节 | 向量召回的观察块，填剩余 `tokenBudget` | 同上 |
 
-**预算是分开的**：`usedTokens / tokenBudget` 只表示第 7、8 段（检索段）的用量；各常驻段走自己的预算（见 `meta.injectionTables.budgets`），互不挤占。
+**预算是分开的**：`usedTokens / tokenBudget` 只表示第 8、9 段（检索段）的用量；各常驻段走自己的预算（见 `meta.injectionTables.budgets`），互不挤占。
 
 分开的理由：常驻段承载的是"必然在场"的信息（角色是谁、关系怎样、发生了什么、还欠着什么），一旦与"当前更像"的记忆抢同一个预算，它们会被挤掉 —— 而被挤掉的那一刻，那段信息在模型眼里就凭空消失了。
 
@@ -417,6 +420,65 @@ holder 与 target 同实体 → 400。
 
 ---
 
+### `POST /api/observe` — 组合抽取（**harness / agent 主入口**）
+
+默认**一次 LLM 调用**产出三层：**事件要素 → 属性观察 → 关系立场**（层的 id/顺序/依赖由
+`OBSERVE_PIPELINE` 声明，经 `meta.observePipeline` 下发）。
+
+**为什么要它**（两层理由，第二层才是关键）：
+
+1. 三层必须吃**同一段文本**与**同一组来源楼层**，否则事件/属性/立场描述的不是同一段剧情。
+   单步端点分开调时这条不变式只靠调用方纪律维持；组合入口把它收回服务端，调用方无从传错。
+2. **跨层锚点只有合并才能填**。分开抽时属性步/立场步看不到事件步刚抽出的实例，
+   于是 `valid_from_event_id`（这条观察/立场是被哪个事件触发的）在自动路径上**永远为空**。
+   合并成一次阅读后，模型可以在同一份输出里用 `event: "<实例 label>"` 引用自己刚抽的实例，
+   服务端据此把锚点填上。响应里的 `anchored` 就是命中计数。
+
+```json
+{ "chatId": "chat001", "text": "<剧情原文>", "sourceMessageIds": ["m30","m31"],
+  "characterName": "塞拉菲娜", "userName": "林", "writeMemory": true,
+  "steps": ["attributes"], "mode": "merged" }
+```
+
+| 参数 | 说明 |
+|---|---|
+| `steps` | 只补跑指定层（会**退化为 split**：合并输出无法只产出一层）。缺省跑全部 = 一次调用 |
+| `mode` | `merged`（默认，一次调用） / `split`（三层并行各一次，供对照实验与降级） |
+
+```json
+{
+  "ok": true, "chatId": "chat001", "mode": "merged", "llmCalls": 1,
+  "stepsRun": ["instances","attributes","stances"], "partial": false,
+  "zones": { "people": 3, "locations": 2, "instances": 4, "links": 0, "observations": 2, "stances": 1 },
+  "missingZones": [],
+  "anchored": { "observations": 2, "stances": 1 },
+  "steps": {
+    "instances":  { "ok": true, "people": [], "locations": [], "instances": [], "links": [], "memoryIds": [] },
+    "attributes": { "ok": true, "chunks": [], "skipped": 0 },
+    "stances":    { "ok": true, "stances": [], "skipped": 0 }
+  }
+}
+```
+
+**降级口径**（顶层 `ok: true` 不代表三层都成，判读要看 `mode` / `steps` / `missingZones`）：
+
+| 情况 | 表现 |
+|---|---|
+| LLM 未配置 | **400**（needsLlm=true，与其他抽取端点同口径） |
+| embedding 未配置/不可用 | `steps.attributes = { ok:false, skipped:true, skippedReason }`；合并 prompt 会**要求不输出该层**（省输出 token），其余层照常 |
+| 模型输出里缺了某分区键 | `missingZones` 如实点名（截断与"确实没有该层内容"在数据上同形，**不猜原因**）；用 `steps` 补跑该层即可 |
+| 合并输出**整份解析失败** | 自动降级为 `mode: "split-fallback"`（三层并行），数据不丢；`mergedError` 带原因 |
+| 单层失败 | 该层 `{ ok:false, error }`，**不中断**其余层，HTTP 仍 200 |
+
+三个单步端点（`/api/extract`、`/api/extract-attributes`、`/api/extract-stances`）全部保留：
+调试用，以及只补跑其中一层。**它们不再是 agent 的入口** —— MCP 只暴露 `memory_observe`。
+
+**重跑是安全的**（每轮编织的前提，V9 起）：同一窗口重抽 = 重述，事件不新增行只 `confirms+1`；
+属性层按规范化文本判等；立场层走槽位指针。**但 `sourceMessageIds` 必须忠实反映该窗口**——
+它是事件判等键的一半。
+
+---
+
 ## 8.1 槽位与状态迁移 `GET /api/slots`（V7 立场 / V8 属性，只读）
 
 迁移记录**从 supersedes 链推导，不建表**：链头 = 当前指针值，沿指针回溯的相邻两行值不同即为一次迁移。
@@ -572,7 +634,7 @@ curl http://127.0.0.1:7780/api/meta
 | `scoring` | 打分口径：`retrieval` / `forget` / `tokenEstimation`，含 `formula` 原文 |
 | `summaryPolicy` | 长对话压缩策略：**触发楼层数**/单批安全阀/摘要长度上限/建议保留楼层数/**前情提要段配置 `digest`**/理由/节奏预设/合法区间 |
 | `thresholds` | `supersedeSimilarity` / `similarityMetric` |
-| `contextSections` | 注入文本的段落顺序（画像 → 前情提要 → 相关记忆 → 相关细节） |
+| `contextSections` | 注入文本的段落顺序（当前时间 → 角色画像 → 关系立场 → 关键实体 → 前情提要 → 事件时间线 → 待兑现 → 相关记忆 → 相关细节） |
 | `digestFormat` | 【前情提要】的段落形状：`header` 与每行模板 `line`（前端只展示、不解析） |
 | `rules` | 生效规则文案：可见性、当前生效口径、软删除、supersede、立场演化、两套 id 体系… |
 | `endpoints` | 端点清单，含 `needsLlm` / `needsEmbedding` / `degrade` / `degradeNote` |

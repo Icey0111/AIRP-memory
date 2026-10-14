@@ -11,6 +11,7 @@ import { now, clamp01, normalizeSlotValue } from '../utils/text.js';
 import { CHUNK_DEFAULTS, THRESHOLDS, RETRIEVAL_FALLBACK_DEFAULTS } from '../domain/constants.js';
 import { packVector, unpackVector, cosine } from './embeddingClient.js';
 import { findOrCreateValue } from './valueService.js';
+import { ensureVocabulary } from './vocabularyService.js';
 
 // 当前生效过滤 (SQL 片段): 未删除 + 未过期 + 未被新版本覆盖
 const CURRENT = `
@@ -30,18 +31,20 @@ export function addChunk(db, {
 }) {
   if (!entityType || !entityId) throw new Error('entityType/entityId 必填');
   if (!aspect || !content) throw new Error('aspect/content 必填');
-  // V7: 维度名也是网络里的取值元素 (元素先于指针, §16.4) —— 注册但不改文本列
-  findOrCreateValue(db, { name: aspect, kind: 'aspect' });
+  // V10: 维度名也走词表 —— 归一后的词进文本列, 元素 id 进 aspect_id
+  //   (旧口径只 findOrCreateValue 注册元素而不归一: 于是 appearance 与 外貌 是两条不同的槽)
+  const aspectEl = ensureVocabulary(db, 'aspect', aspect);
+  const aspectWord = aspectEl ? aspectEl.word : aspect;
   const ts = now();
   const info = db.prepare(`
     INSERT INTO attribute_chunks
-      (entity_type, entity_id, aspect, content, embedding, embedding_model,
+      (entity_type, entity_id, aspect, aspect_id, content, embedding, embedding_model,
        valid_from_event_id, valid_to_event_id, supersedes_chunk_id,
        confirms, supersede_similarity,
        memory_id, source_message_ids, chat_id, importance, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    entityType, entityId, aspect, content,
+    entityType, entityId, aspectWord, aspectEl?.id ?? null, content,
     embeddingVec ? packVector(embeddingVec) : null, embeddingModel,
     validFromEventId, validToEventId, supersedesChunkId,
     confirms, supersedeSimilarity,
@@ -71,8 +74,12 @@ export function recordObservation(db, {
   if (!entityType || !entityId) throw new Error('entityType/entityId 必填');
   if (!aspect || !content) throw new Error('aspect/content 必填');
 
+  // V10: **先归一, 再找槽位** —— 否则 appearance 与 外貌 会被当成两个槽,
+  // 同一个维度的观察分成两条链, "新观察覆盖旧观察"的防吃书就失效了
+  const aspectWord = ensureVocabulary(db, 'aspect', aspect)?.word ?? aspect;
+
   // 同实体 + 同维度 + 同聊天**当前生效**的块 = 该属性槽位下的现有链头们
-  const heads = currentChunks(db, { entityType, entityId, aspect, chatId });
+  const heads = currentChunks(db, { entityType, entityId, aspect: aspectWord, chatId });
 
   // ① 重述: 规范化后文本完全相同 —— 就是同一个值被再次观察到
   const fingerprint = normalizeSlotValue(content);
@@ -104,7 +111,7 @@ export function recordObservation(db, {
 
   // ③ 建立 / 迁移: 写一行
   const id = addChunk(db, {
-    entityType, entityId, aspect, content,
+    entityType, entityId, aspect: aspectWord, content,
     embeddingVec, embeddingModel,
     supersedesChunkId: isUpdate ? supersedesId : null,
     supersedeSimilarity: isUpdate ? Number(bestSim.toFixed(6)) : null,

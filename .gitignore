@@ -8,6 +8,12 @@ data/
 # 本地私有配置（含 API Key）
 config.json
 server/config.json
+# 配置备份同样是密钥（实测 server/config.json.bak-2144 里就有 apiKey）——
+# 只忽略 config.json 是不够的: 备份文件名带时间后缀, 正则要覆盖到
+config.json.bak*
+*.bak-*
+# 随手放的本机密钥文件（无任何代码读它, 是手抄的 API Key）
+dsapi.txt
 
 # 日志
 *.log

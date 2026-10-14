@@ -12,7 +12,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import Database from 'better-sqlite3';
-import { migrate, getSchemaVersion } from '../src/db/migrate.js';
+import { migrate, getSchemaVersion, LATEST_SCHEMA_VERSION } from '../src/db/migrate.js';
 import { createRouter } from '../src/api/routes.js';
 import { createCorsMiddleware, describeCors } from '../src/api/cors.js';
 import { createMemory } from '../src/services/memoryService.js';
@@ -120,7 +120,7 @@ console.log('\n--- /api/meta 基础 ---');
 const meta = (await req('/api/meta')).body;
 check('/api/meta ok', meta.ok === true && meta.service === 'tavern-memory-server');
 check('schemaVersion / latestSupported 如实上报',
-  meta.schemaVersion === getSchemaVersion(db) && meta.latestSupported === 8,
+  meta.schemaVersion === getSchemaVersion(db) && meta.latestSupported === LATEST_SCHEMA_VERSION,
   `${meta.schemaVersion}/${meta.latestSupported}`);
 check('runtime.version 透传', meta.version === '9.9.9', String(meta.version));
 check('limits 如实上报绑定地址与鉴权', meta.limits.auth === false && meta.limits.boundTo === '127.0.0.1:7780');
@@ -205,9 +205,9 @@ check('公式以文本形式下发 (前端原样展示, 不自己拼)',
   && typeof meta.scoring.forget.formula === 'string');
 check('生效规则文案齐备', ['visibility', 'softDelete', 'supersede', 'stanceEvolution', 'entityIdDuality']
   .every((k) => typeof meta.rules[k] === 'string' && meta.rules[k].length > 0));
-check('注入段落顺序下发 (画像 → 立场 → 关键实体 → 前情提要 → 时间线 → 待兑现 → 相关记忆 → 相关细节)',
-  meta.contextSections.length === 8
-  && meta.contextSections.map((s) => s.key).join(',') === 'profile,stances,entities,digest,timeline,pending,memories,chunks',
+check('注入段落顺序下发 (时间 → 画像 → 立场 → 关键实体 → 前情提要 → 时间线 → 待兑现 → 相关记忆 → 相关细节)',
+  meta.contextSections.length === 9
+  && meta.contextSections.map((s) => s.key).join(',') === 'clock,profile,stances,entities,digest,timeline,pending,memories,chunks',
   JSON.stringify(meta.contextSections.map((s) => s.key)));
 check('段落 order 与数组顺序一致 (前端按 order 展示不会错位)',
   meta.contextSections.every((s, i) => s.order === i + 1));
@@ -227,12 +227,17 @@ check('立场显示规则齐备 (表露列拼装不缺项)',
 check('常驻段预算与段落一一对应 (不留给前端猜)',
   ['profile', 'stances', 'entities', 'timeline'].every((k) => typeof meta.injectionTables.budgets[k] === 'number')
   && meta.injectionTables.budgets.profile > 0);
-check('时间线格式常量齐备 (因果标注三型 + 锚点/注记规则, 前端不另存一份)',
+check('时间线格式常量齐备 (因果标注三型 + 注记规则, 前端不另存一份)',
   ['caused', 'led_to', 'preceded', 'contradicts'].every((k) => typeof meta.injectionTables.linkLabels[k] === 'string')
-  && typeof meta.injectionTables.timeline.seqMark === 'string'
-  && typeof meta.injectionTables.timeline.untimedLabel === 'string'
+  && typeof meta.injectionTables.timeline.linkSep === 'string'
+  && typeof meta.injectionTables.timeColumnTitle === 'string'
   && Array.isArray(meta.injectionTables.timeline.noteSources)
   && meta.injectionTables.timeline.noteSources.length > 0);
+// V10 严格时间口径: 时间位置只放精确时间戳, 剧情标签锚点 (seqMark/untimedLabel/chapterSep) 已删除
+check('不再下发剧情标签锚点 (时间位置只放精确时间戳)',
+  meta.injectionTables.timeline.seqMark === undefined
+  && meta.injectionTables.timeline.untimedLabel === undefined
+  && meta.injectionTables.timeline.chapterSep === undefined);
 check('实体表常量齐备 (收录类型的标签与只读来源一一对应)',
   meta.injectionTables.entities.types.every((t) => typeof meta.injectionTables.entities.kindLabels[t] === 'string'
     && !!meta.injectionTables.entities.sources[t]?.table)
@@ -324,6 +329,7 @@ const SAMPLES = {
   'POST /api/context': [{ query: 'ELARA', chatId: 'chat001' }],
   'POST /api/retrieve': [{ query: 'ELARA', chatId: 'chat001' }],
   'POST /api/extract': [{ chatId: 'chat001', text: 'x' }],
+  'POST /api/observe': [{ chatId: 'chat001', text: 'x' }],
   'POST /api/extract-attributes': [{ chatId: 'chat001', text: 'x' }],
   'POST /api/extract-stances': [{ chatId: 'chat001', text: 'x' }],
   // 用不存在的人物 id, 让 profiles-derive 走"无观察块短路"分支, 便于单独验证 §11.8
@@ -417,9 +423,11 @@ const badTable = await req('/api/forget/restore', { method: 'POST', body: { tabl
 check('restore 非法表名 -> 400', badTable.status === 400 && badTable.body.error.includes('不支持的表'));
 
 // 降级端点必须如实标注 silent
+// /api/observe 计入 silent: 它的 LLM 维度是硬的 (needsLlm=true, 缺则 400),
+// 但 embedding 维度是软的 —— 属性观察步会跳过并记 skippedReason, 与 /api/chunks 同型。
 check('静默降级端点如实标注 degrade=silent',
   meta.endpoints.filter((e) => e.degrade === 'silent')
-    .map((e) => e.path).sort().join(',') === '/api/chunks,/api/context,/api/retrieve',
+    .map((e) => e.path).sort().join(',') === '/api/chunks,/api/context,/api/observe,/api/retrieve',
   meta.endpoints.filter((e) => e.degrade === 'silent').map((e) => e.path).join(','));
 
 // ============================================================

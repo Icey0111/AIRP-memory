@@ -5,7 +5,7 @@ import { findOrCreatePerson, findOrCreateOrg } from './entityService.js';
 import { applyStance } from './stanceService.js';
 import { parseJsonLoose } from './extractionService.js';
 
-const EXTRACT_SYSTEM = `你是角色扮演对话的立场抽取器。从对话中抽取人物/组织之间的相对立场。
+export const EXTRACT_SYSTEM = `你是角色扮演对话的立场抽取器。从对话中抽取人物/组织之间的相对立场。
 立场是有向的: A对B 与 B对A 是两条独立记录, 不对称。只抽取对话中有依据的立场, 不要臆测。
 严格输出 JSON, 不要输出任何其他文字:
 {
@@ -41,21 +41,30 @@ export async function extractStances(db, { llm, chatId, text, sourceMessageIds =
   if (!chatId) throw new Error('chatId 必填');
   const raw = await llm.chat({ system: EXTRACT_SYSTEM, user: text });
   const data = parseJson(raw);
-  const stances = (data.stances ?? []).filter(
-    (s) => s?.holder_name && s?.target_name && s?.stance_type
-  );
-  if (stances.length === 0) return { stances: [], skipped: 0 };
+  return persistStances(db, { chatId, stances: data.stances ?? [], sourceMessageIds });
+}
+
+/**
+ * 立场的落库段 (与 LLM 调用分离)。
+ * 与 persistObservations 同理: 让"一次 LLM 调用产出三个分区"的合并路径能复用落库,
+ * 并顺便填上跨层锚点 (立场是被哪个事件触发的)。
+ */
+export function persistStances(db, { chatId, stances = [], sourceMessageIds = [], labels = null }) {
+  if (!chatId) throw new Error('chatId 必填');
+  const items = stances.filter((s) => s?.holder_name && s?.target_name && s?.stance_type);
+  if (items.length === 0) return { stances: [], skipped: 0 };
 
   const results = [];
   let skipped = 0;
   const insertAll = db.transaction(() => {
-    for (const s of stances) {
+    for (const s of items) {
       const holder = resolveEntity(db, s.holder_type, s.holder_name);
       const target = resolveEntity(db, s.target_type, s.target_name);
       // 不支持的实体类型 / 自指立场: 跳过计数
       if (!holder || !target) { skipped++; continue; }
       if (s.holder_type === s.target_type && holder.id === target.id) { skipped++; continue; }
 
+      const anchor = anchorOf(s, labels);
       // 槽位写入 (V7): 槽位为空 -> 建立; 值相同 -> 确认(不新增行); 值不同 -> 迁移。
       // 迁移判定不再按 (holder,target,type) 找同类型旧行 —— 那是旧规则, 会让
       // "戒备 → 信任" 变成两条并存的立场, 而指针语义要求同槽位只有一个当前值。
@@ -71,6 +80,7 @@ export async function extractStances(db, { llm, chatId, text, sourceMessageIds =
         dimension: s.dimension ?? undefined,
         chatId, sourceMessageIds,
         importance: s.importance ?? 0.5,
+        validFromEventId: anchor,
       });
       results.push({
         id: applied.id,
@@ -81,10 +91,18 @@ export async function extractStances(db, { llm, chatId, text, sourceMessageIds =
         intensity: s.intensity ?? 0.5,
         supersedes: applied.from,
         fromValue: applied.fromValue,
+        eventId: anchor,
       });
     }
   });
   insertAll();
 
   return { stances: results, skipped };
+}
+
+/** 立场声明的 event label → 事件 id (拿不到就留空, 绝不猜) */
+function anchorOf(s, labels) {
+  const label = String(s?.event ?? s?.event_label ?? '').trim();
+  if (!label || !labels) return null;
+  return labels[label] ?? null;
 }

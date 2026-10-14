@@ -84,6 +84,16 @@ export const LLM_LIMITS = {
   chatMaxTokens: 8192,
   /** 述谓实例抽取按调用覆盖的输出上限 (V6 prompt 的 instances/comp/conditional 结构输出体量大) */
   extractionMaxTokens: 8192,
+  /**
+   * 瞬时故障重试 (502/503/504/429/超时/网络错误) —— 每轮编织只有一次调用机会,
+   * 网关抖一下整轮就白抽 (实测 502 连发导致整场戏一行未落)。0 = 不重试。
+   * 只重试"再试一次可能就好"的错误, 4xx 语义错 (如模型名写错) 立刻抛出, 不浪费延迟。
+   */
+  retries: 2,
+  /** 重试退避基数, 第 n 次退避 = base * 2^(n-1) */
+  retryBackoffMs: 500,
+  /** 这些状态码视为瞬时故障, 可重试 */
+  retryableStatus: [408, 425, 429, 500, 502, 503, 504],
 };
 
 /** 立场默认值 (表里如一 / 公开 / 对方知情 的缺省) */
@@ -139,14 +149,15 @@ export const TOKEN_ESTIMATION = {
  * 常驻段各自走独立预算 (见 INJECTION_TABLES.budgets), 不与检索段互相挤占。
  */
 export const CONTEXT_SECTIONS = [
-  { order: 1, key: 'profile', label: '角色画像', description: '常驻; 类别/条目/内容 三列, 由观察块归纳的条目标 ※' },
-  { order: 2, key: 'stances', label: '关系立场', description: '常驻; 当前聊天生效立场的有向边清单, 表露列承载二阶语义' },
-  { order: 3, key: 'entities', label: '关键实体', description: '常驻限量; 人物/地点/物品/组织的规范速写与复现计数' },
-  { order: 4, key: 'digest', label: '前情提要', description: '按楼层顺序拼接的摘要链, 常驻且不参与相似度打分' },
-  { order: 5, key: 'timeline', label: '事件时间线', description: '常驻限量; 事件邻接视图, 因果边标注; 归属声称带来源口吻与定局标记' },
-  { order: 6, key: 'pending', label: '待兑现', description: '常驻限量; 未决命题 (承诺/约定/威胁/线索), 独立预算, 空则不出段' },
-  { order: 7, key: 'memories', label: '相关记忆', description: 'FTS 召回 (已排除摘要), 按打分顺序填预算' },
-  { order: 8, key: 'chunks', label: '相关细节', description: '向量召回的观察块' },
+  { order: 1, key: 'clock', label: '当前时间', description: '时间锚: 精确到分 (年月日星期时分); 剧情未给明确时间时按最近一条记录的写入时间近似推断, 并标注是推断的' },
+  { order: 2, key: 'profile', label: '角色画像', description: '常驻; 类别/条目/内容 三列, 由观察块归纳的条目标 ※' },
+  { order: 3, key: 'stances', label: '关系立场', description: '常驻; 当前聊天生效立场的有向边清单, 表露列承载二阶语义' },
+  { order: 4, key: 'entities', label: '关键实体', description: '常驻限量; 人物/地点/物品/组织的规范速写与复现计数' },
+  { order: 5, key: 'digest', label: '前情提要', description: '按楼层顺序拼接的摘要链, 常驻且不参与相似度打分' },
+  { order: 6, key: 'timeline', label: '事件时间线', description: '常驻限量; 事件邻接视图, 因果边标注; 归属声称带来源口吻与定局标记' },
+  { order: 7, key: 'pending', label: '待兑现', description: '常驻限量; 未决命题 (承诺/约定/威胁/线索), 独立预算, 空则不出段' },
+  { order: 8, key: 'memories', label: '相关记忆', description: 'FTS 召回 (已排除摘要), 按打分顺序填预算' },
+  { order: 9, key: 'chunks', label: '相关细节', description: '向量召回的观察块' },
 ];
 
 // ============================================================
@@ -168,6 +179,7 @@ export const INJECTION_TABLES = {
    * stances 段是新内容注入 (立场原本完全不进 prompt), 可单独开关。
    */
   headers: {
+    clock: '【当前时间】',
     profile: '【角色画像】',
     stances: '【关系立场】',
     entities: '【关键实体】',
@@ -176,6 +188,16 @@ export const INJECTION_TABLES = {
     memories: '【相关记忆】',
     chunks: '【相关细节】',
   },
+  /**
+   * 时间戳口径 (V10): 上下文里的**时间位置只放精确时间戳** (`yyyy年MM月DD日星期W HH:mm`),
+   * 不留任何模糊措辞 —— 不写"约/推断", 也不把"夜里/第三夜/未定时"这类剧情内标签放进 prompt
+   * (它们仍留在库里与图页面上: 图是给人看的, prompt 是给模型用的)。
+   *
+   * 基准取"最近一条记录的写入时间", 不是服务端当前时间 —— 故事的时间接着上一幕走,
+   * 隔几天再打开不该让剧情凭空跳几天。基准来源只以字段形式上报 (`clockInferred`), 不进 prompt。
+   */
+  /** 时间位置在各表里的列标题 (同源一处, 不再各处写字面量) */
+  timeColumnTitle: '时间',
   /** 规模防线: 防表格爆炸 (超限截行, 不截列) */
   limits: {
     profileRows: 40,
@@ -261,13 +283,13 @@ export const INJECTION_TABLES = {
     conditional: '⇢ 条件',
     alternative: '∨ 择一',
   },
-  /** 时间线单元格式 (§3.4): 节点锚点 = label + seqMark + seq; 无时间节点的事件给未定时占位 */
+  /**
+   * 时间线单元格式 (§3.4)。V10 起时间位置**只放精确时间戳**, 所以这里不再有
+   * seqMark / untimedLabel / chapterSep 那套剧情标签锚点 —— 锚点就是
+   * `2026年10月14日星期三 21:49`; "某夜属于某章"的层级仍在库里 (time_points.parent_id),
+   * 只是不进 prompt (图页面照常显示)。
+   */
   timeline: {
-    seqMark: '#',
-    /** 无 time_id 的事件显示为这个锚点 (占位, 保住对齐与分组) */
-    untimedLabel: '未定时',
-    /** 章节只在切换时随锚点出现一次, 形如 "第三章 / 第三夜, 暴雨 #7" */
-    chapterSep: ' / ',
     /** 因果列多条边之间的分隔符 */
     linkSep: '; ',
     /** 事件注记来源优先级: 只写事件独有信息 (结果/经过), 不复述时间/人物/地点 (§4.6) */
@@ -370,6 +392,7 @@ export const VERB_LAYER = {
   /** 情态 (仅 attributed): 持有者对该命题的态度 */
   attitudes: [
     { value: '说', label: '说' },
+    { value: '问', label: '问', description: '「她问他是否来了」—— 真值既非断言也非相信, 而是被询问' },
     { value: '认为', label: '认为' },
     { value: '相信', label: '相信' },
     { value: '希望', label: '希望' },
@@ -456,6 +479,210 @@ export const VERB_LAYER = {
   timelineStatuses: ['asserted', 'realized', 'refuted'],
   pendingStatuses: ['pending'],
   unrealizedStatuses: ['failed', 'inactive', 'voided'],
+};
+
+// ============================================================
+// 词表层 (V10, 依据 docs/vocabulary-layer.md)
+// ============================================================
+//
+// 病 (2026-10-15 对真实库实测):
+//   谓词 / 题元角色 / 情态 / 从句角色 / 对齐状态原先都是**裸 TEXT 列**。
+//   "拦截盘查"与"盘查"是两个不同文本, 于是"同一谓词被 N 个实例复用"这件事在库里不存在:
+//   40 条实例 33 个谓词, 复用度 1.21, 只有 20% 命中词表; 角色中英各一套
+//   (agent×19 / 发起者×8), 只有 25% 落在词表内。
+//
+//   **后果不止是图难看**: 命题对齐的硬条件是"同动词"(见 VERB_LAYER.alignment) ——
+//   谓词不成词表 => 从句与事实永远不同动词 => 真假判定一次都没生效
+//   (实测: 10 条归属命题, 判定成功 0 条, 全部停在 pending)。
+//
+// 修法沿用 V7 既有原则 (**元素先于指针**, value_nodes): 七个域全部落成取值元素节点,
+//   实例只存 id; 归一在**落库前**由 vocabularyService 做, 不靠 prompt 自觉。
+//
+// 词的"规范写法"仍只在本文件定义一次 (见下方 VOCABULARY_WORDS 的派生):
+//   谓词=verbSuggestions 角色=thematicRoles 情态=attitudes 从句=parentRoles
+//   状态=statuses 维度=ASPECT_SUGGESTIONS 立场=STANCE_TYPE_SUGGESTIONS
+// 本段只补三样**不重复定义**的东西: ① 域清单 ② 别名(含跨语言写法) ③ 谓词上位类
+export const VOCABULARY = {
+  /** 七个语义域。table/column = "实例指向元素"的那根指针 (V10 新增的 FK 列) */
+  kinds: [
+    { value: 'predicate', label: '谓词', table: 'events', column: 'predicate_id', legacy: 'verb_type' },
+    { value: 'role', label: '题元角色', table: 'event_participants', column: 'role_id', legacy: 'role' },
+    { value: 'attitude', label: '情态', table: 'events', column: 'attitude_id', legacy: 'attitude' },
+    { value: 'clause', label: '从句角色', table: 'events', column: 'clause_id', legacy: 'parent_role' },
+    { value: 'status', label: '对齐状态', table: 'events', column: 'status_id', legacy: 'status' },
+    { value: 'aspect', label: '观察维度', table: 'attribute_chunks', column: 'aspect_id', legacy: 'aspect' },
+    { value: 'stance_type', label: '立场类型', table: 'stances', column: 'stance_type_id', legacy: 'stance_type' },
+    // 时段: 时间点 (第三夜, 暮色中…) 是**世界内时刻**, 保留各自的身份;
+    // 它指向的抽象元素是"时段"(昼/夜/黄昏) —— 于是"所有夜间发生的事"一跳即达,
+    // 而两个不同的夜晚绝不会因为归一被并成一个时刻 (UNIQUE(chat_id,label) 仍然管身份)
+    { value: 'time', label: '时段', table: 'time_points', column: 'period_id', legacy: 'label' },
+  ],
+  /**
+   * 谓词上位类 —— "抽象到可高度复用"的真正落点:
+   * 具体动词多而杂 (实测 33 个/40 条), 上位类少而稳 (11 个)。
+   * 聚合、着色、找"所有言语类实例"都走这一层; 具体词只是它的叶子。
+   */
+  predicateClasses: ['言语', '感知', '位移', '交互', '给予', '取用', '攻防', '救助', '隐瞒', '心理', '状态'],
+  /**
+   * 时段上位类: 昼 / 夜。昼夜是叙事里最常用的一层抽象 ("所有夜间发生的事"),
+   * 与谓词上位类同一个用法 —— 具体词做叶子, 类名本身也是合法取值。
+   */
+  timeClasses: ['昼', '夜'],
+  /** 具体时段 -> 上位类 */
+  timeParents: {
+    昼: '昼', 夜: '夜',
+    黎明: '昼', 清晨: '昼', 上午: '昼', 正午: '昼', 午后: '昼',
+    黄昏: '夜', 深夜: '夜',
+  },
+  /**
+   * 具体谓词 -> 上位类。含**实测已出现的词** —— 迁移据此给旧数据挂类,
+   * 挂不上的进待审队列 (人工挂)。类名映射到自身 (叶子也可以是类)。
+   */
+  predicateParents: {
+    言语: '言语', 感知: '感知', 位移: '位移', 交互: '交互', 给予: '给予', 取用: '取用',
+    攻防: '攻防', 救助: '救助', 隐瞒: '隐瞒', 心理: '心理', 状态: '状态',
+    // 种子词
+    说: '言语', 问: '言语', 答: '言语', 承诺: '言语', 威胁: '言语',
+    看: '感知', 听: '感知', 摸: '感知', 发现: '感知',
+    去: '位移', 来: '位移', 离开: '位移',
+    给予: '给予', 转交: '给予', 取: '取用',
+    伤害: '攻防', 战斗: '攻防',
+    救助: '救助', 隐瞒: '隐瞒', 决定: '心理',
+    是: '状态', 叫: '状态',
+    // 实测已出现的具体谓词 (挂类即可; 不在 aliases 里的说明它是个独立的动词, 等人工审)
+    盘查: '交互', 索要: '言语', 报出: '言语', 告知时限: '言语', 开口说明: '言语',
+    给出最后机会: '言语', 劝告: '言语', 出示凭据: '交互', 翻手展示: '交互', 解牌: '交互',
+    通关入境: '位移', 抵达: '位移', 把守: '状态', 列位待命: '状态', 沉默: '状态',
+    动作: '交互', 押送: '位移', 杀害: '攻防', 试绳: '交互', 说明: '言语', 命令: '言语',
+    透露: '言语', 解释: '言语', 提醒: '言语', 告知: '言语',
+  },
+  /**
+   * 归一表: **规范词 -> 别名** (服务载入时反转成 别名->规范词 的查表)。
+   * 只放"确实是同一个语义"的写法 (跨语言、同义词、简称)。
+   * 不是同义的就不放 —— 让它作为新元素进待审队列。归并不可逆 (与实体归并同一条纪律)。
+   */
+  aliases: {
+    role: {
+      发起者: ['agent', 'actor', '施事', '施动者', '主语', '行动者', 'initiator'],
+      参与者: ['participant', '参与', '在场者', '涉及者'],
+      对象: ['patient', 'object', 'target', '受事', '客体', '宾语', '承受者'],
+      与事: ['recipient', 'beneficiary', '伴随', '同行者', '接受者', '受赠者'],
+      受害者: ['victim', '被害者', '受伤者', '牺牲者'],
+      目击者: ['witness', '旁观者', '见证者'],
+      工具: ['instrument', 'tool', '器具', '道具', '媒介'],
+      提及: ['mention', 'mentioned', '被提及', '提到', '被谈到'],
+    },
+    attitude: {
+      说: ['声称', '宣称', '声明', '表示', '告诉', '讲述', '复述', '转述', '透露', '解释',
+        '提醒', '索要', '要求', '劝告', '警告', '威胁', '恐吓', '要挟', '最后通牒',
+        '主张', '承诺', '答应', '应允', '发誓'],
+      问: ['询问', '发问', '质问', '追问', '打听', '问及', '查问', '探问'],
+      认为: ['觉得', '以为', '认定', '判定', '判断', '推断'],
+      相信: ['确信', '坚信', '深信', '笃信'],
+      希望: ['期待', '盼望', '打算', '计划', '意图', '想要', '但愿'],
+      怀疑: ['疑心', '质疑', '存疑', '将信将疑'],
+      假装: ['装作', '佯装', '伪装', '假称'],
+      不知: ['不知道', '不了解', '不清楚', '未察觉', '未意识到', '无从得知'],
+    },
+    aspect: {
+      appearance: ['外貌', '外表', '容貌', '长相', '仪容', '外形'],
+      personality: ['性格', '个性', '性情', '脾气', '心性'],
+      speech: ['说话', '语言', '口吻', '谈吐', '语气', '语癖'],
+      habit: ['习惯', '习性', '惯例', '口头禅', '行为习惯', '作风'],
+      relationship: ['关系', '人际关系', '情感', '羁绊', '亲疏'],
+      skill: ['能力', '技能', '专长', '本领', '身手', '特长'],
+      scene: ['环境', '场景', '景象', '陈设', '布局', '地形'],
+      atmosphere: ['氛围', '气氛', '气象', '基调'],
+      detail: ['细节', '其他', '杂项', '备注'],
+    },
+    clause: {
+      comp: ['命题宾语', '从句', '内容从句', '宾语从句', '所说内容'],
+      cond: ['条件', '条件前件', '前件', '如果', '前提'],
+      alt: ['择一', '择一候选', '或', '选项', '候选'],
+    },
+    status: {
+      asserted: ['事实', '叙述者事实', '断言'],
+      pending: ['未决', '待定', '未对齐'],
+      realized: ['已兑现', '已证实', '兑现', '证实'],
+      failed: ['已落空', '落空', '未发生'],
+      inactive: ['未激活', '条件未成立'],
+      refuted: ['被推翻', '推翻', '已被拆穿', '拆穿', '撒谎'],
+      voided: ['已作废', '作废', '未选中'],
+    },
+    stance_type: {
+      敌视: ['敌对', '敌意'],
+      仇视: ['仇恨', '憎恨'],
+      戒备: ['警惕', '提防', '防范'],
+      信任: ['信赖', '信服'],
+      亲近: ['亲密', '亲昵', '好感'],
+      爱慕: ['喜欢', '恋慕', '钟情'],
+      尊敬: ['敬重', '敬佩', '敬畏'],
+      疏离: ['冷淡', '疏远', '漠然'],
+      利用: ['算计', '图谋'],
+      友好: ['友善', '善意', '和气'],
+      中立: ['中性', '无所谓'],
+    },
+    /** 时段别名: 把"夜里/夜色/暮色/中午"这类写法收进 8 个抽象时段 (夜 本身就是规范词) */
+    time: {
+      黎明: ['拂晓', '破晓', '天将明', '东方既白'],
+      清晨: ['早晨', '早上', '一早', '清晨时分', '晨'],
+      上午: ['午前', '晌午前'],
+      正午: ['中午', '午时', '日中', '日头当空'],
+      午后: ['下午', '晌午后', '日头偏西'],
+      黄昏: ['傍晚', '暮色', '暮色中', '日暮', '薄暮', '日落时分', '夕阳西下', '入夜前'],
+      夜: ['夜里', '夜色', '晚间', '晚上', '夜晚', '入夜', '夜幕降临', '深更'],
+      深夜: ['半夜', '子夜', '午夜', '三更', '夜深'],
+    },
+    /** 谓词别名: 只放"同义换写", 不放"同一类" —— 归类靠 parent, 合并靠 CLI 人工 */
+    predicate: {
+      去: ['前往', '动身', '启程'],
+      来: ['到来', '抵达'],
+      离开: ['离去', '走开', '退场'],
+      说: ['讲', '说道', '开口', '出言', '告知', '报出', '说明', '解释', '提醒', '透露', '劝告', '命令', '索要'],
+      问: ['询问', '发问', '盘问', '盘查'],
+      答: ['回答', '回应', '答复'],
+      看: ['望', '注视', '端详'],
+      听: ['倾听', '聆听'],
+      给予: ['给', '递', '交给', '赠予'],
+      取: ['拿', '取走', '拿走'],
+      转交: ['转递', '递交'],
+      伤害: ['攻击', '击伤', '打伤'],
+      战斗: ['交战', '厮杀', '搏斗'],
+      救助: ['救', '施救', '治疗', '疗伤'],
+      发现: ['察觉', '注意到', '发觉'],
+      决定: ['下定决心', '决意'],
+      隐瞒: ['掩饰', '藏匿'],
+      承诺: ['允诺'],
+      威胁: ['恐吓', '要挟'],
+    },
+  },
+  /** 归一纪律 (服务与 CLI 共同遵守) */
+  policy: {
+    hit: '别名命中 -> 规范词 (可逆: 别名表删掉即恢复)',
+    miss: '未命中 -> 新建取值元素 (source=extracted, status=needs_review), 不静默丢弃',
+    merge: '人工归并走 node src/cli/vocab.js merge <kind> <from> <to> (改指针 + 并别名, 不可逆)',
+    principle: '宁可不并: 多一个节点不破坏指针语义, 错并会抹掉刻意的区分',
+    noPhraseMerge: '短语型谓词 (如「拦截盘查」) 一律进待审队列, 不自动拆词 —— 拆错比不拆更有害',
+    polarityNotANode: '极性只有 ± 两值且是对齐的参与方, 留作字段不建节点 (二值枚举做节点只会更吵)',
+  },
+};
+
+/**
+ * 各域的规范词。**派生自既有枚举** —— 词仍然只在上面那几处定义一次, 这里不重复写一遍。
+ * 供 vocabularyService 建种子元素、meta/CLI 报表使用。
+ */
+export const VOCABULARY_WORDS = {
+  // 上位类本身也是合法的谓词值 (实测模型确实会直接产出"位移/交互/言语"这种类名),
+  // 所以类名与具体动词同处一个域, 只靠 parent_id 分层
+  predicate: [...VERB_LAYER.verbSuggestions, ...VOCABULARY.predicateClasses],
+  role: VERB_LAYER.thematicRoles.map((r) => r.value),
+  attitude: VERB_LAYER.attitudes.map((a) => a.value),
+  clause: VERB_LAYER.parentRoles.map((r) => r.value),
+  status: VERB_LAYER.statuses.map((s) => s.value),
+  aspect: [...ASPECT_SUGGESTIONS.person, ...ASPECT_SUGGESTIONS.location],
+  stance_type: STANCE_TYPE_SUGGESTIONS,
+  time: [...VOCABULARY.timeClasses, ...Object.keys(VOCABULARY.timeParents)
+    .filter((w) => !VOCABULARY.timeClasses.includes(w))],
 };
 
 // ============================================================
@@ -625,9 +852,13 @@ export const SUMMARY_POLICY = {
  */
 export const DIGEST_FORMAT = {
   header: '【前情提要】',
-  /** 每行的模板; {from}/{to} 为该摘要覆盖的楼层区间, {content} 为摘要正文 */
-  line: '[{from}-{to}] {content}',
-  description: '按楼层顺序拼接的摘要链; 行首 [起-止] 为覆盖的楼层区间',
+  /**
+   * 每行的模板。
+   *   {time}    该摘要的**绝对时间**: 有剧情时间就用它; 没有就用写入时间近似推断 (前缀标"约")
+   *   {from}/{to} 为该摘要覆盖的楼层区间; {content} 为摘要正文
+   */
+  line: '[{time} · {from}-{to}] {content}',
+  description: '按楼层顺序拼接的摘要链; 行首 [时间 · 起-止] 为绝对时间与覆盖的楼层区间',
 };
 
 // ============================================================
@@ -698,17 +929,68 @@ export const RULES = {
  */
 
 /** @type {EndpointSpec[]} */
+// ============================================================
+// 组合抽取管线 (/api/observe)
+// ============================================================
+//
+// 为什么需要一个组合入口, 而不是让调用方连着调三个端点:
+//   三段抽取必须作用于**同一段文本**与**同一组来源楼层** —— 这不是风格偏好, 是正确性前提:
+//   文本不一致, 事件/属性/立场描述的就根本不是同一段剧情; 来源楼层不一致, 追溯链错位。
+//   把顺序与共享入参收回到服务端, 调用方 (酒馆前端 / agent) 就没有传错的机会。
+//   三个单步端点全部保留: 调试用, 以及只补跑其中一段 (steps 参数)。
+export const OBSERVE_PIPELINE = [
+  { id: 'instances', label: '事件要素', needsEmbedding: false, endpoint: '/api/extract' },
+  { id: 'attributes', label: '属性观察', needsEmbedding: true, endpoint: '/api/extract-attributes' },
+  { id: 'stances', label: '关系立场', needsEmbedding: false, endpoint: '/api/extract-stances' },
+];
+
+export const OBSERVE_STEP_IDS = OBSERVE_PIPELINE.map((s) => s.id);
+
+/**
+ * MCP 侧"轮次水位"提示 (server/mcp/turnNudge.mjs)。
+ *
+ * 解决的是实测问题: 纪律写着"每轮编织", 模型会漂成"攒几轮织一次" ——
+ * 内容不一定漏, 但纪律名存实亡。适配器看得见每次 memory_context 调用 (= 新的一轮开始),
+ * 于是超过阈值就把一行提示附在该次返回里, 让纠正跟着模型读记忆的动作一起到。
+ * 阈值与文案在这里定义一次 (语义同源的规矩同样适用于工具面文案)。
+ */
+export const MCP_NUDGE = {
+  /** 距上次 memory_observe 经过多少次 memory_context 调用后开始提示 */
+  afterContextCalls: 2,
+  hint: '\n\n【记忆编织提醒】距上次 memory_observe 已经过 {n} 轮记忆读取。'
+    + '按纪律现在应当把最近还没抽取的那几轮对话 (含上一轮你的回复) 织进记忆网络 —— '
+    + '一次调用即可完成, 若这几轮确实没有新剧情可跳过。',
+  /**
+   * observe 全层失败 (= 这一轮其实一行都没落库) 时附在返回里的提示 ({steps} {reason} 占位)。
+   *
+   * 为什么必须显式说: 单层失败不中断其余层是**服务端有意设计**, 因此顶层 ok 仍为 true,
+   * 只看 ok 的调用方会把"一行没写"读成"记好了"。实测确实发生过 —— 抽取网关整段 502,
+   * 三层全灭, 模型收到 ok:true 就往下走了, 这一轮剧情永久丢失且无人察觉。
+   * 同时该次 observe **不清水位**, 于是下一轮读记忆时的【记忆编织提醒】会再提一次。
+   */
+  failedHint: '\n\n【本轮记忆未落库】抽取全部失败 ({steps} 三层), 这轮内容一行都没写进记忆网络。'
+    + '原因: {reason}。'
+    + '你的回复不受影响, 但**不要当它已经记下了**; 也不要在本轮反复重试 (多半是临时故障)。'
+    + '下一轮读记忆时会再次提醒你, 届时用**完全相同的 text 与 sourceMessageIds** 补跑一次 memory_observe。',
+};
+
+/** 摘要文案: 顺序与分段名从管线派生, 不另写一份 */
+export const OBSERVE_SUMMARY = `组合抽取 —— 默认**一次 LLM 调用**产出三层 (${OBSERVE_PIPELINE.map((s) => `${s.label}(${s.id})`).join(' → ')}), 三层共享同一段文本与同一组来源楼层, 该不变式由服务端保证; 观察与立场会用同一次输出里的实例 label 锚到触发它的事件上 (valid_from_event_id)。mode=split 或传 steps 时退化为分步并行 (补跑用); 合并输出整份解析失败会自动降级为分步并行并如实标注 mode`;
+
+export const OBSERVE_DEGRADE_NOTE = 'embedding 不可用时"属性观察"层跳过并在该层记 skippedReason, 其余两层照常 (此时合并 prompt 会要求不输出该层, 省输出 token); 任一层失败只影响该层 (ok:false + error), 不中断其余层, HTTP 仍为 200 —— 因此判断结果要看 steps 与 mode, 不能只看顶层 ok';
+
 export const ENDPOINTS = [
   { method: 'GET', path: '/health', summary: '存活探针', needsLlm: false, needsEmbedding: false, degrade: 'error', degradeNote: '不依赖任何外部能力' },
   { method: 'GET', path: '/api/status', summary: 'schema 版本与各表行数 (自检)', needsLlm: false, needsEmbedding: false, degrade: 'error', degradeNote: '不依赖任何外部能力' },
   { method: 'GET', path: '/api/meta', summary: '契约描述 (本端点): 枚举/权重/阈值/默认值/能力依赖', needsLlm: false, needsEmbedding: false, degrade: 'error', degradeNote: '不依赖任何外部能力' },
 
-  { method: 'POST', path: '/api/context', summary: '注入组装, 前端每轮生成前的主入口', needsLlm: false, needsEmbedding: false, degrade: 'silent', degradeNote: '未配 embedding 或 embedding 服务故障时无【相关细节】段 (故障原因经 chunkError 字段上报), 仍返回画像与 FTS 记忆' },
+  { method: 'POST', path: '/api/context', summary: '注入组装, 每轮生成前的主入口 (必须带 characterId 才有【角色画像】段: 画像按角色隔离, 缺了它这一段整段缺席)', needsLlm: false, needsEmbedding: false, degrade: 'silent', degradeNote: '未配 embedding 或 embedding 服务故障时无【相关细节】段 (故障原因经 chunkError 字段上报), 仍返回画像与 FTS 记忆' },
   { method: 'POST', path: '/api/retrieve', summary: '三路召回原始结果 (调试用)', needsLlm: false, needsEmbedding: false, degrade: 'silent', degradeNote: '未配 embedding 时响应无 chunkHits 字段; embedding 服务故障时返回 chunkError 而非 400' },
 
   { method: 'POST', path: '/api/extract', summary: '述谓实例抽取 (谁—动词—谁 + 来源/时态/极性, 含人物/地点/时间点/因果边; 可选 characterName/userName 身份锚定: 卡名并入人物别名, 用户强制 main 一等节点)', needsLlm: true, needsEmbedding: false, degrade: 'error', degradeNote: 'LLM 未配置时 400' },
   { method: 'POST', path: '/api/extract-attributes', summary: '三阶属性观察抽取', needsLlm: true, needsEmbedding: true, degrade: 'error', degradeNote: 'LLM 或 embedding 未配置时 400' },
   { method: 'POST', path: '/api/extract-stances', summary: '立场抽取与演化', needsLlm: true, needsEmbedding: false, degrade: 'error', degradeNote: 'LLM 未配置时 400' },
+  { method: 'POST', path: '/api/observe', summary: OBSERVE_SUMMARY, needsLlm: true, needsEmbedding: false, degrade: 'silent', degradeNote: OBSERVE_DEGRADE_NOTE },
   { method: 'GET', path: '/api/slots', summary: '槽位与状态迁移 (当前指针值 + 迁移序列, 从 supersedes 链推导)', needsLlm: false, needsEmbedding: false, degrade: 'error', degradeNote: '不依赖任何外部能力' },
 
   { method: 'GET', path: '/api/config', summary: '模型配置打码视图 (密钥只回显 ••••+末4位, 不可还原)', needsLlm: false, needsEmbedding: false, degrade: 'error', degradeNote: '不依赖任何外部能力' },

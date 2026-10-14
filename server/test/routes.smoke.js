@@ -9,7 +9,7 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import Database from 'better-sqlite3';
-import { migrate, getSchemaVersion } from '../src/db/migrate.js';
+import { migrate, getSchemaVersion, LATEST_SCHEMA_VERSION } from '../src/db/migrate.js';
 import { createRouter, jsonErrorHandler } from '../src/api/routes.js';
 import { createConfigApi } from '../src/services/configService.js';
 import { createMemory } from '../src/services/memoryService.js';
@@ -110,7 +110,7 @@ check('GET /health 契约', health.status === 200
   && health.body.ok === true && health.body.service === 'tavern-memory-server');
 
 const status = await req('GET', '/api/status');
-check('GET /api/status 版本正确', status.body.schemaVersion === 8 && status.body.latestSupported === 8);
+check('GET /api/status 版本正确', status.body.schemaVersion === LATEST_SCHEMA_VERSION && status.body.latestSupported === LATEST_SCHEMA_VERSION);
 check('GET /api/status 计数反映种子数据', status.body.counts.memories === 5,
   `memories=${status.body.counts.memories}`);
 
@@ -320,6 +320,19 @@ const cfgForbidden = await req('POST', '/cfg/api/config', { server: { port: 9999
 check('非 llm/embedding 配置节被拒绝 (端口等只能改文件)',
   cfgForbidden.status === 400 && cfgForbidden.body.error?.includes('不允许修改'),
   JSON.stringify(cfgForbidden.body));
+
+// ---------- 组合抽取端点 (HTTP 层形状) ----------
+// 服务层的不变式在 observe.smoke.js 里钉; 这里只钉 HTTP 契约:
+// 缺 LLM 时 400 且给出缺失原因, 且不返回半成品 (不伪造 ok:true)。
+const observeNoLlm = await req('POST', '/nollm/api/observe', { chatId: 'chat001', text: 'x' });
+check('POST /api/observe 缺 LLM -> 400 且说明原因',
+  observeNoLlm.status === 400 && String(observeNoLlm.body.error).includes('LLM'),
+  JSON.stringify({ status: observeNoLlm.status, body: observeNoLlm.body }));
+
+const observeNoChat = await req('POST', '/noembed/api/observe', { text: 'x' });
+check('POST /api/observe 缺 chatId -> 400 (入参校验在服务层)',
+  observeNoChat.status === 400 && String(observeNoChat.body.error).includes('chatId'),
+  JSON.stringify({ status: observeNoChat.status, body: observeNoChat.body }));
 
 // ---------- 收尾 ----------
 server.close();

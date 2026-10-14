@@ -13,7 +13,7 @@ import {
   ASPECT_SUGGESTIONS, STANCE_TYPE_SUGGESTIONS,
   CHUNK_DEFAULTS, STANCE_DEFAULTS,
   RETRIEVAL_SCORING, RETRIEVAL_FALLBACK_DEFAULTS, TOKEN_ESTIMATION, CONTEXT_SECTIONS, DIGEST_FORMAT,
-  INJECTION_TABLES, VERB_LAYER, SLOT_MODEL,
+  INJECTION_TABLES, VERB_LAYER, SLOT_MODEL, OBSERVE_PIPELINE,
   THRESHOLDS, SUMMARY_POLICY, FORGET_SCORING, FORGET_TABLES,
   RULES, ENDPOINTS,
 } from '../domain/constants.js';
@@ -158,6 +158,8 @@ export function buildMeta(db, { llm = null, embed = null, retrieval = {}, runtim
     verbLayer: VERB_LAYER,
     // 槽位模型 (V7): 三种结构操作 / 槽位定义 / 取值域 —— 面板展示"迁移/确认"用
     slotModel: SLOT_MODEL,
+    // 组合抽取管线: 步 id/顺序/标签/依赖 (调用方据 steps 参数只补跑某一段)
+    observePipeline: OBSERVE_PIPELINE,
     // 前情提要段的文本形状: 前端展示用 (不解析), 与后端组装同源
     digestFormat: DIGEST_FORMAT,
 

@@ -18,6 +18,7 @@ import { buildProfileTable, buildStanceTable, buildTimelineTable, buildPendingSe
 import { assembleContext } from '../src/services/retrievalService.js';
 import { createMemory } from '../src/services/memoryService.js';
 import { INJECTION_TABLES } from '../src/domain/constants.js';
+import { formatStamp } from '../src/utils/time.js';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -143,6 +144,31 @@ check('顺序: 画像 → 立场 → 相关记忆',
 check('常驻段统计如实上报',
   ctx.profileCount === 3 && ctx.stanceCount === 3 && ctx.stanceTotal === 3 && ctx.stanceTokens > 0,
   JSON.stringify({ p: ctx.profileCount, s: ctx.stanceCount }));
+
+// ---- V10 时间戳: 时间位置只放精确时间, 不留任何模糊措辞 ----
+check('【当前时间】段排在最前 (时间锚)', ctx.text.startsWith(T.headers.clock), ctx.text.slice(0, 60));
+check('时间锚精确到分且带星期 (年月日星期时分)',
+  /^【当前时间】\d{4}年\d{2}月\d{2}日星期. \d{2}:\d{2}$/.test(ctx.text.split('\n')[0]),
+  ctx.text.split('\n')[0]);
+check('时间锚不带任何模糊措辞 (没有"约/推断/未定时")',
+  !/约|推断|未定时/.test(ctx.text.split('\n')[0]), ctx.text.split('\n')[0]);
+check('时间锚 = 最近一条记录的写入时间 (不是服务端当前时间)',
+  ctx.clockAt === db.prepare('SELECT MAX(created_at) m FROM memories WHERE chat_id = ?').get(CHAT).m
+  && ctx.clockInferred === true,
+  String(ctx.clockAt));
+// 把记录时间改到固定值: 锚点必须跟着动 (证明它真的取自记录, 而不是读表时的 now)
+const FIXED_TS = Math.floor(Date.UTC(2026, 9, 15, 1, 23) / 1000);
+db.prepare('UPDATE memories SET created_at = ? WHERE chat_id = ?').run(FIXED_TS, CHAT);
+const ctxClock = await assembleContext(db, null, { query: '艾拉', chatId: CHAT, characterId: '艾拉' });
+check('改记录时间, 时间锚随之改变 (取自记录, 不是读表时的 now)',
+  ctxClock.clockAt === FIXED_TS && ctxClock.text.includes(formatStamp(FIXED_TS)),
+  `at=${ctxClock.clockAt} want=${formatStamp(FIXED_TS)}`);
+const ctxFresh = await assembleContext(db, null, { query: '艾拉', chatId: 'chat-没有任何记录' });
+check('库里一条记录都没有 => 退回服务端当前时间 (字段如实上报来源, prompt 里不写)',
+  ctxFresh.clockInferred === false
+  && /^【当前时间】\d{4}年\d{2}月\d{2}日星期. \d{2}:\d{2}$/.test(ctxFresh.text.split('\n')[0]),
+  ctxFresh.text.split('\n')[0]);
+// 全局不变量在待兑现段之后统一断言 (那里才有带剧情时间标签的实例, 见下文)
 
 const retrievalOnly = await assembleContext(db, null, { query: '艾拉', chatId: CHAT });
 check('画像/立场是常驻段, 不属于检索预算 (usedTokens 只算记忆与细节)',
@@ -296,9 +322,16 @@ const pend = buildPendingSection(db, { chatId: CHAT });
 const P = T.pendingSection;
 check('【待兑现】段出现且标题与常量同源', pend.text.startsWith(P.header), pend.text);
 check('未决行带持有者与从句内容', pend.text.includes('信使说：带主角去北门'), pend.text);
-check('未决行标注未决与时间锚', pend.text.includes('（未决') && pend.text.includes('第九夜'), pend.text);
+check('未决行的时间锚是精确时间戳 (不是"第九夜"这类剧情标签)',
+  pend.text.includes('（未决 · ') && /\d{4}年\d{2}月\d{2}日星期. \d{2}:\d{2}/.test(pend.text)
+  && !pend.text.includes('第九夜'),
+  pend.text);
 
 const ctxWithPending = await assembleContext(db, null, { query: '信使', chatId: CHAT, characterId: '艾拉' });
+// 全局不变量: 整段上下文里不许出现剧情内时间标签 (它们在库里与图页面上保留, 只是不进 prompt)
+check('上下文里没有任何剧情内时间标签 (夜里/第三夜/第九夜/未定时…)',
+  !/夜里|夜色|暮色|第三夜|第九夜|未定时/.test(ctxWithPending.text),
+  ctxWithPending.text.replace(/\n/g, '⏎').slice(0, 220));
 check('assembleContext 注入【待兑现】段并上报统计',
   ctxWithPending.text.includes(P.header) && ctxWithPending.pendingCount >= 1
   && ctxWithPending.pendingTokens > 0,

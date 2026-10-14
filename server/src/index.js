@@ -63,6 +63,14 @@ app.use((req, res, next) => {
 });
 app.use(express.json({ limit: '2mb' }));
 
+// 记忆网络可视化窗口: 静态单文件页 (零依赖, 无构建), 数据走 /api/graph。
+// 用途: 玩 dsh 时在旁边开着看"这场戏织出了什么网" —— 自动刷新, 边玩边长。
+app.get('/graph', (req, res) => {
+  const page = path.join(config.serverRoot, 'public', 'graph.html');
+  if (!fs.existsSync(page)) return res.status(404).json({ ok: false, error: 'graph.html 缺失' });
+  res.set('Cache-Control', 'no-store').sendFile(page);
+});
+
 // 客户端持有者: POST /api/config 保存模型配置后**热重建** (无需重启服务)。
 // 路由内所有引用都经 clients.* 取, 持有者对象不变、实例可换。
 const clients = {

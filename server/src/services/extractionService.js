@@ -12,10 +12,13 @@
 //      否则不可逆的错误合并会发生 (§5.3)。
 import { createMemory } from './memoryService.js';
 import { alignPropositions } from './alignmentService.js';
-import { VERB_LAYER, LLM_LIMITS } from '../domain/constants.js';
+import { now } from '../utils/text.js';
+import { VERB_LAYER, LLM_LIMITS, VOCABULARY_WORDS } from '../domain/constants.js';
 import {
   findOrCreatePerson, findOrCreateLocation, findOrCreateTimePoint,
-  findEventByTitle, createEvent, addEventParticipant, addEventLink, addEntityRef,
+  findMainPerson, ensureMainPerson, mergePersonIntoMain,
+  findEventByTitle, findEventForRestatement,
+  createEvent, addEventParticipant, addEventLink, addEntityRef, resolveStatus,
 } from './entityService.js';
 
 export const SYSTEM_PROMPT = `你是角色扮演剧情的述谓抽取器。请把剧情文本拆成一条条**述谓实例**(谁—动词—谁), 严格输出 JSON, 不要输出任何其他文字。
@@ -24,17 +27,17 @@ export const SYSTEM_PROMPT = `你是角色扮演剧情的述谓抽取器。请�
 {
   "people": [{"name": "人物主称呼", "aliases": ["别名"], "person_type": "main|npc|mentioned"}],
   "locations": [{"name": "地点名", "parent": "上级地点名或null"}],
-  "time_point": {"label": "剧情时间描述, 如 '第三夜, 暴雨'", "seq": 数字或null},
+  "time_point": {"label": "剧情时间描述, 如 '第三夜, 暴雨'", "chapter": "章节名或 null", "seq": 数字或null},
   "instances": [{
     "label": "这条实例的短标签(建议填写: 同聊天内相同标签视为同一条实例, 用于去重; 留空则每次都会新建)",
-    "verb_type": "动词, 尽量用常见词: 说/问/答/看/听/摸/去/来/给予/取/转交/承诺/威胁/救助/伤害/隐瞒/发现/决定/离开/战斗",
+    "verb_type": "动词, **只能从这张表挑**: ${VOCABULARY_WORDS.predicate.join('/')}",
     "verb_surface": "原文里的动词写法(原样保留, 如 '嘟囔了一句')",
     "polarity": "+ 或 -",
     "tense": "past|now|future",
     "source_type": "narrator|attributed",
-    "attitude": "说/认为/相信/希望/怀疑/假装/不知 (仅 attributed)",
+    "attitude": "${VERB_LAYER.attitudes.map((a) => a.value).join('/')} (仅 attributed)",
     "source_name": "立场持有者姓名 (仅 attributed)",
-    "participants": [{"name": "人名(可用别名)", "role": "发起者|参与者|对象|与事|受害者|目击者|工具|提及"}],
+    "participants": [{"name": "人名(可用别名)", "role": "${VERB_LAYER.thematicRoles.map((r) => r.value).join('|')}"}],
     "location": "地点名或null",
     "importance": 0.0到1.0,
     "result_note": "一句话描述这件事造成的状态变化(立场/属性/关系), 没有就留空",
@@ -75,7 +78,14 @@ export const SYSTEM_PROMPT = `你是角色扮演剧情的述谓抽取器。请�
 5. label 可留空; 只抽取文本中明确出现或强烈暗示的内容, 不要编造。
 6. participants 里的每个人名都要登记到 people 里; 没有内容的字段给空字符串/空数组/null。
 7. 「要么 A 要么 B」这类**择一**必须用 alternatives 表达, 绝不能抽成两条并行实例 ——
-   并行实例在读法上等于"两件事都发生了", 那是凭空编造。只有其中之一会被兑现, 其余作废。`;
+   并行实例在读法上等于"两件事都发生了", 那是凭空编造。只有其中之一会被兑现, 其余作废。
+8. 「她问他是否来了」「他不知道她走没走」这类**是否疑问** = attitude="问" (或不知) +
+   alternatives 给同一件事的**正反两个候选** (一个 polarity="+", 一个 "-")。
+9. verb_type 必须是**单个动词**。把对象塞进动词的写法是错的:
+   反例 "拦截盘查" / "给出最后机会" / "出示凭据" —— 应写 "问" / "给予" / "给出", 对象放进 participants。
+   把对象写进动词会让"同一个动作"在库里变成互不相干的词, 后续真假判定 (按动词匹配) 直接失效。
+10. 归属实例 (attributed) **必须有 comp**: 内容只在 title 里等于没抽 ——
+   宿主"说/问/承诺"本身不参与事实匹配, 匹配由从句去做。`;
 
 /**
  * 身份锚定指令 (可选): 把角色卡名/用户名告诉抽取模型。
@@ -83,7 +93,7 @@ export const SYSTEM_PROMPT = `你是角色扮演剧情的述谓抽取器。请�
  * 别名就落空, 下游画像归纳 (profiles-derive 按卡名找人) 会跳过。用户同理: "你"是用户,
  * 架构规定用户是一等节点 (person_type="main"), 但模型无从判断谁是用户。
  */
-function buildIdentityAnchor({ characterName, userName }) {
+export function buildIdentityAnchor({ characterName, userName }) {
   const lines = [];
   const cn = String(characterName ?? '').trim();
   const un = String(userName ?? '').trim();
@@ -124,12 +134,20 @@ function personMatchesName(p, target) {
 function applyIdentityAnchors(db, people, { userName }) {
   const un = String(userName ?? '').trim();
   if (!un) return;
-  const ts = new Date().toISOString();
-  const p = people.find((x) => personMatchesName(x, un));
-  if (p && p.person_type !== 'main') {
-    db.prepare("UPDATE people SET person_type = 'main', updated_at = ? WHERE id = ?").run(ts, p.id);
-    p.person_type = 'main';
-  }
+
+  // main 唯一不变量收口: 用户本人只能有一个节点。
+  //   既有的坏例子 (实测): 称呼从"你"变"主角"就多出一个 main, 立场/画像按节点裂成两套。
+  //   这里走 findOrCreatePerson({personType:'main'}) —— 它内部保证"有既有 main 就并入并复用",
+  //   于是不论 LLM 这次把人叫成什么, 都落在同一个节点上。
+  // 保守性 (与原语义一致): LLM 根本没提到用户时什么都不做 —— 不凭 userName 凭空造节点,
+  // 也不把没在正文里出现过的称呼写成别名 ("不猜不建")。
+  const matched = people.find((x) => personMatchesName(x, un));
+  if (!matched) return;
+
+  const canonical = ensureMainPerson(db, { name: un });
+  const i = people.findIndex((x) => x.person_type === 'main' || personMatchesName(x, un));
+  if (i >= 0) people[i] = { ...canonical, existed: true };
+  else people.push({ ...canonical, existed: true });
 }
 
 /**
@@ -248,18 +266,12 @@ export const extractSixElements = extractInstances;
 
 const MAX_DEPTH = VERB_LAYER.alignment.maxNestingDepth;
 
-/** 轴③的缺省: 归属命题一律未决; 叙述者对未来的断言也是未决 (担保可信但尚未发生) */
-function resolveStatus({ sourceType, tense }) {
-  if (sourceType === 'attributed') return VERB_LAYER.defaults.attributedStatus;
-  return tense === 'future'
-    ? VERB_LAYER.defaults.narratorFutureStatus
-    : VERB_LAYER.defaults.status;
-}
-
-function persistInstances(db, data, { chatId, sourceMessageIds, writeMemory, characterName, userName }) {
+export function persistInstances(db, data, { chatId, sourceMessageIds, writeMemory = true, characterName = null, userName = null }) {
   const out = {
     people: [], locations: [], timePoint: null,
     instances: [], links: [], memoryIds: [], skipped: 0,
+    /** 归属实例里没给从句的条数 (内容没抽出来 -> 宿主可能泛匹配, 见 persistOne 注释) */
+    attributedWithoutComp: 0,
   };
 
   // 1) 人物与地点 (别名归并)
@@ -304,6 +316,10 @@ function persistInstances(db, data, { chatId, sourceMessageIds, writeMemory, cha
     }
   }
 
+  // 5) 标签索引外露: 合并抽取时, 属性观察与立场要引用本批实例的 label 来填事件锚点
+  //    (labelToId 内部还含 title/verbType 键, 这里原样给出一份可查表)
+  out.labels = Object.fromEntries(labelToId);
+
   return out;
 }
 
@@ -318,7 +334,12 @@ function persistOne(db, inst, ctx, depth, parent) {
   const verbType = String(inst.verb_type ?? '').trim();
   const verbSurface = String(inst.verb_surface ?? '').trim();
   const label = String(inst.label ?? '').trim();
-  const title = label || verbSurface || verbType;
+  // V9: title 与 label 分开。
+  //   合并抽取会同时给 label("e1") 与 title("艾拉把匕首放回桌上"), 描述性标题必须保留;
+  //   旧的 `title = label || verbSurface || verbType` 把 label 写进 title, 于是
+  //   "同一编号在不同窗口"被当成同一事件(实测数据丢失)。
+  //   单步 prompt 不给 title, 于是回落到 label —— 旧口径下 title 本来就是 label, 零漂移。
+  const title = String(inst.title ?? '').trim() || label || verbSurface || verbType;
   if (!title) { out.skipped++; return null; }
 
   // 来源: 实例自己声明优先; 否则**从父实例继承** —— 从句/条件前件默认与其宿主同源。
@@ -335,14 +356,28 @@ function persistOne(db, inst, ctx, depth, parent) {
   const mergeAliases = isNarrator;
   const tense = VERB_LAYER.tenses.some((t) => t.value === inst.tense)
     ? inst.tense : VERB_LAYER.defaults.tense;
-  // 幂等: **只在有 label 时**按标签去重。
-  // 无标签实例不能用动词当身份键 —— 两条不同的从句可能同为 verb_type='去',
-  // 那样第二条会被误判为"已存在"而整条丢失 (实测踩到)。
-  const existing = label ? findEventByTitle(db, chatId, title) : null;
+  // 幂等 (V9 修正): **只在实例带 label 时**判等, 判等键 = 同 label 同窗口, 或同 title 同时间点。
+  //   ① 为什么要 label 这个前提: 无 label 时 title 会回落到动词 (verbSurface/verbType),
+  //      多条从句可能同为"去" → 一判等就会互相吞并 (旧代码早就写明这条, 实测也踩过)。
+  //   ② 为什么 label 分支必须带来源窗口: label("e1")是模型在一次输出内的临时编号,
+  //      合并抽取每个窗口都从 e1 开始; 旧口径把它写进 title 又只按 (chat, title) 判等,
+  //      于是第二段剧情里同样叫 e1 的实例被判"已存在", 整条事件被静默丢弃 (实测: 窗口 2 落 0 条)。
+  const scope = JSON.stringify(sourceMessageIds ?? []);
+  const existing = label
+    ? findEventForRestatement(db, {
+      chatId, title, timeId: ctx.timePoint?.id ?? null, label, scope,
+    })
+    : null;
   let instanceId;
   if (existing) {
     instanceId = existing.id;
-    out.instances.push({ id: instanceId, title, verbType, sourceType, existed: true });
+    // 重述只计数, 不新增行 (与属性层 confirms / 立场层 confirm 对称)
+    db.prepare('UPDATE events SET confirms = confirms + 1, updated_at = ? WHERE id = ?')
+      .run(now(), instanceId);
+    out.instances.push({
+      id: instanceId, label: existing.label ?? label ?? title, title: existing.title,
+      verbType, sourceType, existed: true, confirms: (existing.confirms ?? 0) + 1,
+    });
   } else {
     // 一阶事件记忆: 只给叙述者断言写 (归属命题不得污染 FTS 检索)
     let memoryId = null;
@@ -373,6 +408,7 @@ function persistOne(db, inst, ctx, depth, parent) {
 
     instanceId = createEvent(db, {
       title,
+      label: label || null,
       process: verbSurface,
       resultText: inst.result_note ?? '',
       timeId: ctx.timePoint?.id ?? null,
@@ -392,7 +428,12 @@ function persistOne(db, inst, ctx, depth, parent) {
       parentInstanceId: parent?.id ?? null,
       parentRole: parent?.role ?? null,
     });
-    out.instances.push({ id: instanceId, title, verbType, sourceType, existed: false });
+    out.instances.push({ id: instanceId, label: label || title, title, verbType, sourceType, existed: false });
+    // 归属实例没有从句 = 它的"内容"没被抽出来 (内容只留在 title 里)。
+    // 后果不只是信息缺失: 宿主"说/问/承诺"这类低特异性动词会**自己**去参与事实匹配,
+    // 靠"动词 + 题元重叠"泛匹配到任何一次交谈 (docs/verb-layer.md §6.1 实测警告过的坑)。
+    // 只如实计数, 不猜原因、不阻断写入 —— 这个数字是"抽得够不够细"的体检指标。
+    if (sourceType === 'attributed' && !inst.comp) out.attributedWithoutComp++;
 
     // 题元参与者 + 引用桥
     for (const part of inst.participants ?? []) {

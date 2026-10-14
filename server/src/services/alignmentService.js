@@ -13,6 +13,7 @@
 // 模型会把没发生的事当真, 而这种错误静默。
 import { now } from '../utils/text.js';
 import { VERB_LAYER } from '../domain/constants.js';
+import { setVocabValue } from './vocabularyService.js';
 
 const A = VERB_LAYER.alignment;
 const W = A.weights;
@@ -49,7 +50,7 @@ function hasPendingComp(db, instanceId) {
  * @returns {{score:number, overlap:number, polaritySame:boolean, sameLocation:boolean}|null}
  */
 export function matchScore(db, prop, fact) {
-  if (!prop.verb_type || prop.verb_type !== fact.verb_type) return null;
+  if (!samePredicate(prop, fact)) return null;
   const pp = participantsOf(db, prop.id);
   if (pp.size === 0) return null;
   const fp = participantsOf(db, fact.id);
@@ -59,6 +60,19 @@ export function matchScore(db, prop, fact) {
   const sameLocation = prop.location_id != null && prop.location_id === fact.location_id;
   const score = W.verb + W.thematicOverlap * overlap + W.location * (sameLocation ? 1 : 0);
   return { score, overlap, polaritySame: prop.polarity === fact.polarity, sameLocation };
+}
+
+/**
+ * "同一个动词"的判据: **词表元素相同**, 而不是字符串相同。
+ *
+ * V10 的关键修正。旧口径比 verb_type 字符串, 而谓词是每实例自造的
+ * (实测 40 条实例 33 个谓词, 复用度 1.21) => 从句说"去买"、事实写"去" => 永远不同动词
+ * => 真假判定一次都不会成立。谓词落成词表元素后, 归一过的两种写法指向同一个 id, 才谈得上匹配。
+ * 老库/未接指针的行回落到字符串比较 (行为与旧口径一致, 不静默改变判定)。
+ */
+export function samePredicate(a, b) {
+  if (a.predicate_id != null && b.predicate_id != null) return a.predicate_id === b.predicate_id;
+  return !!a.verb_type && a.verb_type === b.verb_type;
 }
 
 /** 在聊天的事实里找与该命题最匹配的一条 (达阈值才算) */
@@ -88,9 +102,14 @@ function isDue(db, prop) {
   return cur != null && max != null && max > cur;
 }
 
+/**
+ * 改写对齐状态。**文本与词表指针必须一起写** (V10):
+ * 只改 status 文本的话, "文本说已兑现、指针还指着未决", 判决就等于没落库。
+ */
 function setStatus(db, id, status, alignedInstanceId = null) {
-  db.prepare('UPDATE events SET status = ?, aligned_instance_id = ?, updated_at = ? WHERE id = ?')
-    .run(status, alignedInstanceId, now(), id);
+  setVocabValue(db, 'status', { table: 'events', rowId: id, value: status });
+  db.prepare('UPDATE events SET aligned_instance_id = ?, updated_at = ? WHERE id = ?')
+    .run(alignedInstanceId, now(), id);
 }
 
 /** 条件前件是否已被判定为"不成立" */
@@ -106,11 +125,12 @@ function conditionResolvedNegatively(db, propId) {
 /** 同一父实例下的 alt 候选: 有一个兑现则其余作废 */
 function voidSiblings(db, prop) {
   if (prop.parent_role !== 'alt' || prop.parent_instance_id == null) return 0;
-  const info = db.prepare(`
-    UPDATE events SET status = 'voided', updated_at = ?
+  const losers = db.prepare(`
+    SELECT id FROM events
     WHERE parent_instance_id = ? AND parent_role = 'alt' AND id <> ? AND status = 'pending'
-  `).run(now(), prop.parent_instance_id, prop.id);
-  return info.changes;
+  `).all(prop.parent_instance_id, prop.id);
+  for (const l of losers) setStatus(db, l.id, 'voided');
+  return losers.length;
 }
 
 /**

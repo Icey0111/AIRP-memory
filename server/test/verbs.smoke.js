@@ -98,7 +98,9 @@ const comp = db.prepare("SELECT * FROM events WHERE parent_role = 'comp' ORDER B
 check('命题宾语落 parent_role=comp 且挂上父实例',
   comp.length === 3 && comp.every((c) => c.parent_instance_id != null), String(comp.length));
 const cond = db.prepare("SELECT * FROM events WHERE parent_role = 'cond'").get();
-check('条件前件落 parent_role=cond', cond?.verb_type === '给', JSON.stringify(cond));
+// V10: 落库前归一 —— '给' 是 '给予' 的别名, 存进去的是规范词, 并挂上词表指针
+check('条件前件落 parent_role=cond 且谓词已归一 (给 -> 给予)',
+  cond?.verb_type === '给予' && cond?.clause_id != null && cond?.predicate_id != null, JSON.stringify(cond));
 check('深度上限生效: 所有子实例的父实例都是顶层 (不存在第 3 层)',
   db.prepare(`
     SELECT COUNT(*) n FROM events child

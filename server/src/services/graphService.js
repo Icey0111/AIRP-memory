@@ -7,6 +7,7 @@
 // 本文件只读、无副作用、零表变更; 单元格文本的格式化留给 injectionService,
 // 语义 (类型标签/排序口径/占位符) 一律取自 domain/constants.js 的 INJECTION_TABLES。
 import { INJECTION_TABLES, VERB_LAYER } from '../domain/constants.js';
+import { formatStamp } from '../utils/time.js';
 
 const T = INJECTION_TABLES.timeline;
 const E = INJECTION_TABLES.entities;
@@ -61,7 +62,8 @@ export function chatTimeline(db, { chatId, limit = INJECTION_TABLES.limits.timel
            e.source_type, e.attitude, e.source_person_id, e.parent_instance_id, e.parent_role,
            hp.name AS holder_name,
            e.time_id,
-           t.label  AS time_label, t.seq AS time_seq,
+           t.label  AS time_label, t.seq AS time_seq, t.created_at AS time_created_at,
+           e.created_at AS event_created_at,
            tp.id    AS chapter_id, tp.label AS chapter_label,
            l.name   AS location_name
     FROM events e
@@ -151,6 +153,10 @@ export function chatTimeline(db, { chatId, limit = INJECTION_TABLES.limits.timel
     timeId: r.time_id,
     timeLabel: r.time_label,
     timeSeq: r.time_seq,
+    // V10 严格时间口径: 时间位置只放精确时间戳, 所以锚点用"那一刻的写入时间"
+    // (时间点自身的 created_at; 无时间点的事件退回自己的 created_at)
+    timeCreatedAt: r.time_created_at ?? null,
+    eventCreatedAt: r.event_created_at ?? null,
     chapterId: r.chapter_id,
     chapterLabel: r.chapter_label,
     locationName: r.location_name,
@@ -185,7 +191,8 @@ export function chatPending(db, { chatId, limit = INJECTION_TABLES.limits.pendin
   const rows = db.prepare(`
     SELECT e.id, e.title, e.verb_type, e.tense, e.source_type, e.attitude,
            hp.name AS holder_name,
-           t.label AS time_label, t.seq AS time_seq
+           t.label AS time_label, t.seq AS time_seq, t.created_at AS time_created_at,
+           e.created_at AS event_created_at
     FROM events e
     LEFT JOIN people       hp ON hp.id = e.source_person_id
     LEFT JOIN time_points t  ON t.id = e.time_id
@@ -214,7 +221,8 @@ export function chatPending(db, { chatId, limit = INJECTION_TABLES.limits.pendin
       attitude: r.attitude,
       holderName: r.holder_name,
       content: comp?.title || comp?.verb_type || r.title,
-      anchor: r.time_label ?? null,
+      // V10: 时间位置只放精确时间戳 (时间点写入时间优先, 否则这条命题自己的写入时间)
+      anchor: formatStamp(r.time_created_at ?? r.event_created_at),
       timeSeq: r.time_seq ?? null,
     };
   }).reverse(); // 展示按剧情先后

@@ -78,7 +78,7 @@ check('V8 迁移前: 观察块还没有 supersede_similarity 列',
   !chunkColsBefore.includes('supersede_similarity'));
 
 const version = migrate(oldDb, migDir, () => {});
-check('迁移后 schema_version=8', version === 8 && getSchemaVersion(oldDb) === 8, String(version));
+check('迁移后 schema_version=10', version === 10 && getSchemaVersion(oldDb) === 10, String(version));
 check('事件一行不少 (迁移前 3)', oldDb.prepare('SELECT COUNT(*) n FROM events').get().n === eventsBefore
   && eventsBefore === 3, `before=${eventsBefore}`);
 check('因果边一行不少 (迁移前 2)', oldDb.prepare('SELECT COUNT(*) n FROM event_links').get().n === linksBefore
@@ -157,22 +157,37 @@ console.log('\n--- 取值元素层 ---');
 check('value_nodes 表已建立',
   oldDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='value_nodes'").get() != null);
 oldDb.prepare(`INSERT INTO value_nodes (name, aliases, kind, created_at, updated_at)
-               VALUES ('信任', '["信赖","信服"]', 'stance_type', ?, ?)`).run(ts, ts);
+               VALUES ('试水立场', '["投石问路"]', 'stance_type', ?, ?)`).run(ts, ts);
 check('取值节点可写入 (含别名)',
-  oldDb.prepare("SELECT aliases FROM value_nodes WHERE name='信任'").get().aliases === '["信赖","信服"]');
+  oldDb.prepare("SELECT aliases FROM value_nodes WHERE name='试水立场'").get().aliases === '["投石问路"]');
 check('同域同名唯一 (第二行被 UNIQUE 拒绝)',
   (() => {
     try {
       oldDb.prepare(`INSERT INTO value_nodes (name, kind, created_at, updated_at)
-                     VALUES ('信任', 'stance_type', ?, ?)`).run(ts, ts);
+                     VALUES ('试水立场', 'stance_type', ?, ?)`).run(ts, ts);
       return false;
     } catch { return true; }
   })());
-check('同名不同域可并存 (信任/aspect 可建)',
+check('同名不同域可并存 (试水立场/aspect 可建)',
   (() => {
     oldDb.prepare(`INSERT INTO value_nodes (name, kind, created_at, updated_at)
-                   VALUES ('信任', 'aspect', ?, ?)`).run(ts, ts);
-    return oldDb.prepare("SELECT COUNT(*) n FROM value_nodes WHERE name='信任'").get().n === 2;
+                   VALUES ('试水立场', 'aspect', ?, ?)`).run(ts, ts);
+    return oldDb.prepare("SELECT COUNT(*) n FROM value_nodes WHERE name='试水立场'").get().n === 2;
+  })());
+// V10: 词表是**种子**灌进去的 (词只在 constants 定义一次), 指针列两处入口都要有
+check('V10 种子词表已灌入 (七个域都有 ok 元素)',
+  ['predicate', 'role', 'attitude', 'clause', 'status', 'aspect', 'stance_type']
+    .every((k) => oldDb.prepare("SELECT COUNT(*) n FROM value_nodes WHERE kind=? AND status='ok'").get(k).n > 0),
+  ['predicate', 'role', 'attitude', 'clause', 'status', 'aspect', 'stance_type']
+    .map((k) => `${k}:${oldDb.prepare('SELECT COUNT(*) n FROM value_nodes WHERE kind=?').get(k).n}`).join(' '));
+check('V10 谓词带上位类层级 (言语/感知/位移 之类)',
+  oldDb.prepare(`SELECT COUNT(*) n FROM value_nodes c JOIN value_nodes p ON p.id = c.parent_id
+                  WHERE c.kind='predicate' AND p.kind='predicate'`).get().n > 0);
+check('V10 指针列可写并读回',
+  (() => {
+    const pid = oldDb.prepare("SELECT id FROM value_nodes WHERE kind='predicate' AND name='去'").get().id;
+    oldDb.prepare('UPDATE events SET predicate_id = ? WHERE id = 1').run(pid);
+    return oldDb.prepare('SELECT predicate_id p FROM events WHERE id = 1').get().p === pid;
   })());
 
 console.log('\n--- 入口二: 全新库跑 schema.sql ---');
@@ -180,8 +195,8 @@ const freshDb = new Database(':memory:');
 freshDb.pragma('foreign_keys = ON');
 fs.copyFileSync(path.join(dbDir, 'schema.sql'), path.join(migDir, 'schema.sql'));
 migrate(freshDb, migDir, () => {});
-check('全新引导即为 v8', getSchemaVersion(freshDb) === 8, String(getSchemaVersion(freshDb)));
-check('全新库也带 LATEST_SCHEMA_VERSION 一致', LATEST_SCHEMA_VERSION === 8);
+check('全新引导即为 v10', getSchemaVersion(freshDb) === 10, String(getSchemaVersion(freshDb)));
+check('全新库也带 LATEST_SCHEMA_VERSION 一致', LATEST_SCHEMA_VERSION === 10);
 check('全新库同样有视图', freshDb.prepare('SELECT COUNT(*) n FROM v_facts').get().n === 0
   && freshDb.prepare('SELECT COUNT(*) n FROM v_propositions').get().n === 0);
 check('全新库同样有 value_nodes',
@@ -201,6 +216,24 @@ check('attribute_chunks 列定义逐列一致 (V8 新列两个入口都要有)',
 check('stances 列定义逐列一致 (V7 槽位列两个入口都要有)',
   JSON.stringify(cols(oldDb, 'stances')) === JSON.stringify(cols(freshDb, 'stances')),
   `\n    迁移: ${cols(oldDb, 'stances').join(' | ')}\n    新装: ${cols(freshDb, 'stances').join(' | ')}`);
+// V10: 词表指针列 + 元素自描述列, 两个入口都必须一致 (迁移链漏一列 = 线上两种库结构)
+check('event_participants 列定义逐列一致 (V10 角色指针)',
+  JSON.stringify(cols(oldDb, 'event_participants')) === JSON.stringify(cols(freshDb, 'event_participants')),
+  `\n    迁移: ${cols(oldDb, 'event_participants').join(' | ')}\n    新装: ${cols(freshDb, 'event_participants').join(' | ')}`);
+check('value_nodes 列定义逐列一致 (V10 待审队列字段)',
+  JSON.stringify(cols(oldDb, 'value_nodes')) === JSON.stringify(cols(freshDb, 'value_nodes')),
+  `\n    迁移: ${cols(oldDb, 'value_nodes').join(' | ')}\n    新装: ${cols(freshDb, 'value_nodes').join(' | ')}`);
+check('time_points 列定义逐列一致 (V10 时段指针)',
+  JSON.stringify(cols(oldDb, 'time_points')) === JSON.stringify(cols(freshDb, 'time_points')),
+  `\n    迁移: ${cols(oldDb, 'time_points').join(' | ')}\n    新装: ${cols(freshDb, 'time_points').join(' | ')}`);
+check('V10 时段域也灌了种子 (昼/夜 + 具体时段带上位类)',
+  ['time'].every((k) => oldDb.prepare("SELECT COUNT(*) n FROM value_nodes WHERE kind=? AND status='ok'").get(k).n > 0)
+  && oldDb.prepare(`SELECT COUNT(*) n FROM value_nodes c JOIN value_nodes p ON p.id = c.parent_id
+                    WHERE c.kind='time' AND p.name IN ('昼','夜')`).get().n > 0);
+check('V10 指针列两个入口都在 (events 四个 + 观察/立场各一个)',
+  ['predicate_id', 'attitude_id', 'clause_id', 'status_id'].every((c) => cols(freshDb).some((x) => x.startsWith(c + ':')))
+  && cols(freshDb, 'attribute_chunks').some((c) => c.startsWith('aspect_id:'))
+  && cols(freshDb, 'stances').some((c) => c.startsWith('stance_type_id:')));
 
 const objects = (db) => db.prepare(
   "SELECT type, name FROM sqlite_master WHERE type IN ('table','view','index') AND name NOT LIKE 'sqlite_%' ORDER BY type, name"

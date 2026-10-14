@@ -1,0 +1,927 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>记忆网络 · 节点是词汇</title>
+<style>
+  :root {
+    --bg: #0b0f17; --panel: #111827; --panel2: #0e1420; --line: #1f2937;
+    --text: #e5e7eb; --dim: #94a3b8; --faint: #64748b; --accent: #38bdf8;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text);
+    font: 13px/1.5 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif; }
+  body { display: flex; flex-direction: column; }
+  #bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px;
+    background: var(--panel); border-bottom: 1px solid var(--line); flex: none; }
+  #bar h1 { font-size: 14px; margin: 0 8px 0 0; font-weight: 600; letter-spacing: .5px; }
+  #bar h1 span { color: var(--faint); font-weight: 400; font-size: 12px; }
+  select, button, label.chip { background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+    border-radius: 6px; padding: 3px 9px; font: inherit; cursor: pointer; }
+  select:hover, button:hover, label.chip:hover { border-color: var(--accent); }
+  label.chip input { vertical-align: -2px; margin-right: 4px; accent-color: var(--accent); }
+  label.chip.off { opacity: .4; }
+  #scrub-wrap { display: flex; align-items: center; gap: 8px; flex: 1 1 280px; min-width: 240px; }
+  #scrub { flex: 1; accent-color: var(--accent); }
+  #scrub-label { min-width: 150px; color: var(--dim); font-size: 12px; text-align: right; }
+  #status { color: var(--faint); font-size: 12px; }
+  #stage { position: relative; flex: 1 1 auto; min-height: 0; }
+  canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+  canvas.dragging { cursor: grabbing; }
+  #tip { position: absolute; pointer-events: none; display: none; max-width: 340px;
+    background: rgba(17,24,39,.96); border: 1px solid var(--line); border-radius: 8px;
+    padding: 7px 10px; font-size: 12px; color: var(--text); box-shadow: 0 6px 24px rgba(0,0,0,.5); z-index: 5; }
+  #tip b { color: var(--accent); }
+  #tip .m { color: var(--dim); }
+  #side { position: absolute; top: 10px; right: 10px; width: 340px; max-height: calc(100% - 20px);
+    overflow: auto; background: rgba(17,24,39,.94); border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 14px; display: none; z-index: 4; }
+  #side h3 { margin: 0 0 6px; font-size: 14px; }
+  #side .row { margin: 5px 0; }
+  #side .k { color: var(--faint); margin-right: 6px; }
+  #side .close { float: right; cursor: pointer; color: var(--faint); }
+  #side .close:hover { color: var(--text); }
+  #idx { position: absolute; left: 10px; top: 10px; width: 360px; max-height: 62%; overflow: auto;
+    background: rgba(17,24,39,.94); border: 1px solid var(--line); border-radius: 10px; padding: 8px;
+    display: none; z-index: 4; font-size: 12px; }
+  #idx .ix { padding: 3px 7px; border-radius: 5px; cursor: pointer; color: var(--dim); }
+  #idx .ix:hover { background: #1f2937; color: var(--text); }
+  #idx .ix.active { background: #164e63; color: #e0f2fe; }
+  #legend { position: absolute; left: 10px; bottom: 10px; background: rgba(17,24,39,.9);
+    border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 11px;
+    color: var(--dim); display: flex; gap: 10px; flex-wrap: wrap; max-width: 76%; z-index: 3; }
+  #legend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 4px; vertical-align: -1px; }
+  #legend i.sq { border-radius: 2px; }
+  #legend i.di { border-radius: 1px; transform: rotate(45deg); }
+  #empty { position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+    color: var(--faint); flex-direction: column; gap: 8px; z-index: 2; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <h1>记忆网络 <span>节点是词汇 · 边是角色 · 线上零句子</span></h1>
+  <select id="chat"></select>
+  <label class="chip" data-layer="role" title="题元角色: 实例 —发起者/对象/与事…→ 指称"><input type="checkbox" checked>角色</label>
+  <label class="chip" data-layer="pred" title="谓词词表: 所有经由同一谓词的实例共享一个抽象节点 (复用度 = count)"><input type="checkbox" checked>谓词</label>
+  <label class="chip" data-layer="time" title="时间词表: 时间点是可复用节点, 可嵌套章节"><input type="checkbox" checked>时间</label>
+  <label class="chip" data-layer="place" title="地点"><input type="checkbox" checked>地点</label>
+  <label class="chip" data-layer="link" title="实例之间: 因果/引出/前承/矛盾/条件/择一 + 嵌套引述"><input type="checkbox" checked>因果</label>
+  <label class="chip" data-layer="stance" title="立场: 指称 → 指称 (有向, 带强度)"><input type="checkbox" checked>立场</label>
+  <label class="chip" data-layer="truth" title="真值词表: 叙述者事实/未决/已兑现/已落空/被推翻…"><input type="checkbox">真值</label>
+  <label class="chip" data-layer="modal" title="情态与担保来源: 叙述者断言 / 说 / 认为 / 希望… + 持有者"><input type="checkbox">情态</label>
+  <label class="chip" data-layer="obs" title="观察: 实例 —方面词→ 指称 (正文在侧栏读)"><input type="checkbox">观察</label>
+  <label class="chip" data-flag="rolemode" title="把角色词也做成共享节点 (全图至多 8 个), 线上彻底零文字; 关 = 角色词写在边上"><input type="checkbox" id="chip-rolemode">角色节点化</label>
+  <label class="chip" data-flag="fact" title="只看叙述者断言, 隐藏角色声称/从句 (对齐 v_facts 口径)"><input type="checkbox" id="chip-fact">仅事实</label>
+  <label class="chip"><input type="checkbox" id="auto" checked>自动刷新</label>
+  <button id="fit" title="把图装回视口">⌂ 复位</button><button id="play">▶ 回放</button>
+  <button id="idx-btn" title="全部述谓实例索引: 点一条即高亮唤起它的通路">☰ 实例</button>
+  <div id="scrub-wrap">
+    <input id="scrub" type="range" min="0" max="1" value="1" step="1">
+    <div id="scrub-label">时间轴 —</div>
+  </div>
+  <div id="status">加载中…</div>
+</div>
+<div id="stage">
+  <canvas id="cv"></canvas>
+  <div id="tip"></div>
+  <div id="side"><span class="close" id="side-x">✕</span><div id="side-body"></div></div>
+  <div id="legend"></div>
+  <div id="idx"></div>
+  <div id="empty"><div>这个范围还没有可显示的记忆网络</div><div style="font-size:12px">先在 dsh 里跑几轮对话，等 memory_observe 落库后这里会长出来</div></div>
+</div>
+<script>
+'use strict';
+// ============================================================
+// 记忆网络可视化 (零依赖单文件)
+// 图式: docs/graph-view.md —— **节点是词汇, 边是角色, 线上零句子**。
+//   ① 词表节点 (圆/方, 全图共享): 指称 / 时间 / 谓词 / 角色 / 真值 / 情态
+//   ② 结构节点 (菱形): 述谓实例 —— 标签只写谓词 + 通路坐标, 不写句子
+//   ③ 边: 每条只写**一个**抽象词 (发起者/对象/时间/地点/真值/起因…), 词一律由服务端下发
+//      (domain/constants 单一语义源), 本页不写第二份词表。
+// 数据: GET /api/graph。交互: 拖节点 / 拖背景 / 滚轮 / 点选看详情 / 时间轴回放 / 自动刷新。
+// ============================================================
+const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+const stage = document.getElementById('stage'), tip = document.getElementById('tip');
+const side = document.getElementById('side'), sideBody = document.getElementById('side-body');
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+/** 本页认识的图式版本 (必须与 server/src/services/graphProjection.js 的 schema 一致) */
+const GRAPH_SCHEMA = 'graph-view/v2';
+
+// ---- 配色/形状只表"类别", 语义词一律来自服务端载荷 ----
+const TYPE_COLORS = { main:'#f5a524', npc:'#38bdf8', mentioned:'#64748b',
+  location:'#4ade80', org:'#c084fc', item:'#f472b6', time:'#818cf8',
+  predicate:'#fb923c', role:'#22d3ee', truth:'#a3e635', modality:'#e879f9', instance:'#cbd5e1' };
+const TYPE_NAMES = { main:'用户本人', npc:'角色', mentioned:'提及', location:'地点', org:'组织',
+  item:'物品', time:'时间', predicate:'谓词', role:'题元角色', truth:'真值', modality:'情态', instance:'述谓实例' };
+const STANCE_TONES = [
+  [/敌对|戒备|敌意|警惕|厌恶|鄙视|愤怒|恐惧|威胁|仇视|敌视|利用/, '#f87171'],
+  [/保护|守护|庇护|眷顾|亲近|爱慕|尊敬|信任|友好|好感|感激/, '#60a5fa'],
+];
+const EDGE_STYLE = {
+  role:  { color:'rgba(148,163,184,.34)', w:1.1 },                 // 实例 —角色词→ 指称
+  pred:  { color:'rgba(251,146,60,.42)',  w:1.2 },                 // 实例 —谓词→ 谓词节点
+  time:  { color:'rgba(129,140,248,.42)', w:1, dash:[3,4] },       // 实例 —时间→ 时间点
+  place: { color:'rgba(74,222,128,.32)',  w:1, dash:[3,4] },       // 实例 —地点→ 地点
+  truth: { color:'rgba(163,230,53,.34)',  w:1, dash:[2,3] },       // 实例 —真值→ 真值
+  modal: { color:'rgba(232,121,249,.34)', w:1, dash:[2,3] },       // 实例 —情态→ 情态 / 持有者
+  link:  { color:'rgba(125,211,252,.58)', w:1.6, arrow:true },     // 实例 —因果→ 实例
+  nest:  { color:'rgba(251,191,36,.6)',   w:1.4, arrow:true, dash:[5,4] },
+  stance:{ color:'#eab308', w:1.4, arrow:true, dash:[6,4] },
+  obs:   { color:'rgba(148,163,184,.15)', w:.9 },                  // 实例 —方面词→ 指称
+  parent:{ color:'rgba(129,140,248,.3)', w:.9, dash:[2,4] },       // 时间 —章节→ 时间
+};
+// 边标签在什么缩放级别显示 (太小则省, 免得糊; 高亮时一律显示)
+const LABEL_MIN_K = { role:.72, link:.7, nest:.7, stance:.8, obs:1.15, pred:1.0, time:1.0, place:1.0, truth:1.1, modal:1.1 };
+const NEEDS_LAYER = { role:'role', pred:'pred', time:'time', place:'place', truth:'truth', modal:'modal',
+  hold:'modal', link:'link', nest:'link', stance:'stance', obs:'obs', parent:'time' };
+const toneOf = (t) => (STANCE_TONES.find(([re]) => re.test(t || ''))?.[1]) ?? EDGE_STYLE.stance.color;
+
+const S = {
+  data: null, chatId: null, maxOrder: 1, scrub: 1, playing: false, playNext: 0,
+  hover: null, selected: null, auto: true, alpha: 1,
+  focus: null,        // 节点 key —— 聚焦时其余淡出
+  prevNodeCount: 0, prevChat: undefined, userMoved: false,
+  layers: new Set(['role', 'pred', 'time', 'place', 'link', 'stance']),
+  roleAsNode: false,  // 角色节点化: 角色词从边上搬进共享节点
+  factOnly: false,    // 仅事实: 隐藏 attributed (角色声称/从句) 的实例
+  view: { x: 0, y: 0, k: 1 }, drag: null,
+};
+const nodes = new Map();   // key -> 节点 (x/y 为世界坐标)
+let edges = [];            // {layer, kind, a, b, order, label, ...meta}
+const keyOf = (kind, id) => `${kind}:${id}`;
+const wordKey = (v) => keyOf('v', v);
+
+// ---------------- 数据拉取与合并 ----------------
+async function load() {
+  const url = '/api/graph' + (S.chatId ? `?chatId=${encodeURIComponent(S.chatId)}` : '');
+  try {
+    const d = await (await fetch(url)).json();
+    if (!d.ok) throw new Error(d.error || '未知错误');
+    // 静态页与投影是一对: 服务端还是旧投影时明说, 而不是画一张空图
+    if (d.schema !== GRAPH_SCHEMA) throw new Error(`服务端投影版本不符 (${d.schema || '无版本号'}) —— 重启记忆服务后生效`);
+    const atMax = S.scrub >= S.maxOrder;          // 停在末端 = 直播: 新剧情自动长出来
+    S.data = d;
+    S.maxOrder = Math.max(1, d.nodes.instances.length);
+    if (!Number.isFinite(S.scrub)) S.scrub = S.maxOrder;   // 滑杆值被污染时兜底 (NaN 会过滤掉一切)
+    syncNodes(d);
+    edges = buildEdges(d);
+    computeBirthsAndDegrees();
+    placeNewcomers();
+    if (S.selected && !nodes.has(S.selected.key)) { S.selected = null; side.style.display = 'none'; }
+    if (S.hover && !nodes.has(S.hover.key)) S.hover = null;
+    if (S.focus && !nodes.has(S.focus.key)) S.focus = null;
+    S.scrub = atMax ? S.maxOrder : Math.min(S.scrub, S.maxOrder);
+    $('scrub').max = String(S.maxOrder); $('scrub').value = String(S.scrub);
+    updateScrubLabel(); buildChatSelect(); buildLegend(); buildIndex();
+    const words = d.nodes.predicates.length + d.nodes.roles.length + d.nodes.timePoints.length
+      + d.nodes.truths.length + d.nodes.modalities.length;
+    const ents = ['people', 'locations', 'orgs', 'items'].reduce((n, k) => n + d.nodes[k].length, 0);
+    const el = $('status');
+    el.style.color = '';                          // 清掉上一次的红色报错
+    el.textContent = `${d.nodes.instances.length} 实例 · ${ents} 指称 · ${words} 词表节点 · ${edges.length} 边`
+      + ` · ${new Date().toLocaleTimeString('zh-CN', { hour12:false })} · ${S.frames || 0}帧`;
+    $('empty').style.display = (d.nodes.instances.length + ents) ? 'none' : 'flex';
+    // 视野自适应: 只要用户没手动挪过视图就每次重新装框 ——
+    // 力导向会把初始的紧簇慢慢撑开, 只在首帧装框的话缩放停在 2x, 节点全飞出视口 (实测黑屏第二根因)
+    if (!S.userMoved) fitView();
+    S.prevNodeCount = nodes.size; S.prevChat = S.chatId;
+    S.alpha = Math.max(S.alpha, .6);
+  } catch (e) { $('status').textContent = '拉取失败: ' + e.message; }
+}
+
+/** 增量同步节点: 已存在的保留坐标只更新元数据, 消失的移除 */
+function syncNodes(d) {
+  const want = new Map();
+  const add = (kind, list, typeOf, extra) => {
+    for (const it of list) want.set(keyOf(kind, it.id), {
+      key: keyOf(kind, it.id), kind, id: it.id,
+      name: it.name || it.label || it.title || '(未命名)',
+      type: typeOf(it), aliases: it.aliases || [], desc: it.description || '',
+      count: it.count ?? 0, ...(extra ? extra(it) : {}),
+    });
+  };
+  add('p', d.nodes.people, (x) => x.type || 'npc');
+  add('l', d.nodes.locations, () => 'location');
+  add('o', d.nodes.orgs, () => 'org');
+  add('i', d.nodes.items, () => 'item');
+  // 时间节点 (可复用, 可嵌套章节, 带时段抽象层)
+  add('t', d.nodes.timePoints, () => 'time', (x) => ({
+    periodName: x.periodName ?? null, note: x.note || '', parentId: x.parentId ?? null,
+  }));
+  // 词表: 谓词 / 角色 / 真值 / 情态 —— 现在是**库里真实存在的元素** (value_nodes),
+  // 带 写法(别名) / 上位类 / 待审状态 / 复用度 count
+  const wordExtra = (x) => ({
+    word: x.word || x.id, parentName: x.parentName ?? null, wstatus: x.status || 'ok',
+    aliases: x.aliases || [], surfaces: x.surfaces || [], full: x.full || null,
+  });
+  add('v', d.nodes.predicates, () => 'predicate', wordExtra);
+  add('r', d.nodes.roles, () => 'role', wordExtra);
+  add('s', d.nodes.truths, () => 'truth', wordExtra);
+  add('m', d.nodes.modalities, () => 'modality', wordExtra);
+  // 结构层: 述谓实例 (簇的锚点; 标签只写谓词 + 坐标, 句子载荷只进悬浮/侧栏)
+  add('x', d.nodes.instances, () => 'instance', (x) => ({
+    predicate: x.predicate, coordinate: x.coordinate, verbSurface: x.verbSurface,
+    predicateUnknown: x.predicateUnknown, polarity: x.polarity, tense: x.tense,
+    status: x.status, truth: x.truth, sourceType: x.sourceType, attitude: x.attitude,
+    sourcePersonId: x.sourcePersonId, modality: x.modality, timeId: x.timeId,
+    timeLabel: x.timeLabel, locationId: x.locationId, confirms: x.confirms,
+    parentInstanceId: x.parentInstanceId, parentRole: x.parentRole,
+    title: x.title, process: x.process, resultText: x.resultText, order: x.order,
+  }));
+  for (const [key, def] of want) {
+    const old = nodes.get(key);
+    nodes.set(key, old ? Object.assign(old, def) : { ...def, vx: 0, vy: 0 });  // x/y 保留
+  }
+  for (const key of [...nodes.keys()]) if (!want.has(key)) nodes.delete(key);
+}
+
+/**
+ * 把投影的**原语**展开成画布上的边: 每条边只带一个抽象词 (label)。
+ * 角色节点化开关只改"角色词写在哪": 边上 (默认) 或共享角色节点上 (二跳)。
+ */
+function buildEdges(d) {
+  const out = [];
+  const orderOf = new Map(d.nodes.instances.map((e) => [e.id, e.order]));
+  const push = (kind, a, b, order, meta = {}) => {
+    if (!nodes.has(a) || !nodes.has(b)) return null;
+    const e = { layer: NEEDS_LAYER[kind], kind, a, b, order: order ?? S.maxOrder, ...meta };
+    out.push(e); return e;
+  };
+  const ko = (t, id) => keyOf(t === 'person' ? 'p' : t === 'org' ? 'o' : t === 'item' ? 'i' : 'l', id);
+  const inst = (id) => keyOf('x', id);
+
+  // ---- 实例 —角色词→ 指称 ----
+  const roleOut = new Map();
+  for (const r of d.edges.roles) {
+    const a = inst(r.instance), b = ko(r.entityType, r.entity), o = orderOf.get(r.instance);
+    if (!S.roleAsNode) { push('role', a, b, o, { label: r.label, role: r.role }); continue; }
+    const rk = keyOf('r', r.role);
+    push('role', a, rk, o, { label: '', role: r.role, hop: 'in' });
+    const key = rk + '|' + b;
+    const cur = roleOut.get(key);
+    if (cur) { cur.order = Math.min(cur.order, o ?? cur.order); cur.serves.push(r.instance); }
+    else roleOut.set(key, { layer: 'role', kind: 'role', a: rk, b, order: o, label: '', role: r.role, hop: 'out', serves: [r.instance] });
+  }
+  for (const e of roleOut.values()) if (nodes.has(e.a) && nodes.has(e.b)) out.push(e);
+
+  // ---- 实例 —抽象词→ 词表节点 / 指称 ----
+  for (const e of d.edges.predicates) push('pred', inst(e.instance), wordKey(e.predicate), orderOf.get(e.instance), { label: '谓词', predicate: e.predicate });
+  for (const e of d.edges.times) push('time', inst(e.instance), keyOf('t', e.time), orderOf.get(e.instance), { label: '时间' });
+  for (const e of d.edges.places) push('place', inst(e.instance), keyOf('l', e.place), orderOf.get(e.instance), { label: '地点' });
+  for (const e of d.edges.truths) push('truth', inst(e.instance), keyOf('s', e.truth), orderOf.get(e.instance), { label: '真值', truth: e.truth });
+  for (const e of d.edges.modalities) push('modal', inst(e.instance), keyOf('m', e.modality), orderOf.get(e.instance), { label: '情态', modality: e.modality });
+  for (const e of d.edges.holders) push('hold', inst(e.instance), ko(e.entityType, e.entity), orderOf.get(e.instance), { label: e.label });
+
+  // ---- 实例 —关系→ 实例 (因果/条件/择一 + 嵌套引述) ----
+  for (const l of d.edges.links)
+    push('link', inst(l.from), inst(l.to), Math.max(orderOf.get(l.from) ?? 1, orderOf.get(l.to) ?? 1),
+      { label: l.label, relation: l.relation });
+  for (const n of d.edges.nesting)
+    push('nest', inst(n.parent), inst(n.child), orderOf.get(n.child), { label: n.label, parentRole: n.role });
+  for (const p of d.edges.timeParents)
+    push('parent', keyOf('t', p.child), keyOf('t', p.parent), undefined, { label: '' });
+
+  // ---- 立场: 指称 → 指称 ----
+  for (const s of d.edges.stances)
+    push('stance', ko(s.holderType, s.holderId), ko(s.targetType, s.targetId),
+      s.fromEvent ? (orderOf.get(s.fromEvent) ?? S.maxOrder) : S.maxOrder,
+      { label: s.stanceType, stanceType: s.stanceType, intensity: s.intensity, basis: s.basis });
+
+  // ---- 观察: 实例 —方面词→ 指称 (正文是载荷, 只在侧栏读) ----
+  for (const o of d.edges.observations)
+    push('obs', inst(o.instance), ko(o.entityType, o.entityId), orderOf.get(o.instance),
+      { label: o.aspect, aspect: o.aspect, content: o.content });
+  return out;
+}
+
+function computeBirthsAndDegrees() {
+  for (const n of nodes.values()) { n.birth = Infinity; n.degree = 0; }
+  for (const e of edges) {
+    const a = nodes.get(e.a), b = nodes.get(e.b);
+    a.birth = Math.min(a.birth, e.order); b.birth = Math.min(b.birth, e.order);
+    a.degree++; b.degree++;
+  }
+  for (const n of nodes.values()) if (!isFinite(n.birth)) n.birth = 1;
+}
+
+/** 新节点落在相邻节点附近 (少一点随机弹开), 触发布局重排 */
+function placeNewcomers() {
+  let placed = false;
+  for (const n of nodes.values()) {
+    if (n.x !== undefined) continue;
+    const nb = edges.find((e) => (e.a === n.key || e.b === n.key) && nodes.get(e.a === n.key ? e.b : e.a)?.x !== undefined);
+    const ref = nb ? nodes.get(nb.a === n.key ? nb.b : nb.a) : null;
+    n.x = (ref?.x ?? 0) + (Math.random() - .5) * 240;
+    n.y = (ref?.y ?? 0) + (Math.random() - .5) * 240;
+    placed = true;
+  }
+  if (placed) S.alpha = 1;
+}
+
+// ---------------- 可见性 (图层 × 时间轴 × 事实口径) ----------------
+// "仅事实" = 隐藏 attributed 的述谓实例 (角色说的/想的/从句/条件) —— 与 v_facts 同口径:
+// 叙述者的断言才是事实, 声称归命题层。被隐藏实例上的边一并隐藏。
+const hiddenByFact = () => {
+  if (!S.factOnly) return null;
+  const s = new Set();
+  for (const n of nodes.values())
+    if (n.kind === 'x' && n.sourceType && n.sourceType !== 'narrator') s.add(n.key);
+  return s;
+};
+function visibleEdges() {
+  const hid = hiddenByFact();
+  return edges.filter((e) => S.layers.has(e.layer) && e.order <= S.scrub
+    && (!hid || (!hid.has(e.a) && !hid.has(e.b))));
+}
+function visibleNodeKeys() {
+  const set = new Set();
+  for (const e of visibleEdges()) { set.add(e.a); set.add(e.b); }
+  return set;
+}
+
+// ---------------- 力导向 (持续微动 = "动态") ----------------
+function physics() {
+  const arr = [...nodes.values()].filter((n) => n.x !== undefined);
+  const a = S.alpha;
+  for (let i = 0; i < arr.length; i++) for (let j = i + 1; j < arr.length; j++) {
+    const p = arr[i], q = arr[j];
+    let dx = q.x - p.x, dy = q.y - p.y, d2 = dx * dx + dy * dy;
+    if (d2 < 1) { dx = Math.random() - .5; dy = Math.random() - .5; d2 = 1; }
+    if (d2 > 360000) continue;
+    const f = (p.kind === 'x' && q.kind === 'x' ? 900 : 2600) / d2;
+    const d = Math.sqrt(d2), ux = dx / d, uy = dy / d;
+    p.vx -= ux * f * a; p.vy -= uy * f * a; q.vx += ux * f * a; q.vy += uy * f * a;
+  }
+  const REST = { stance:170, link:70, nest:70, parent:60, role:S.roleAsNode ? 62 : 95,
+    pred:85, time:105, place:105, truth:120, modal:120, hold:110, obs:115 };
+  for (const e of visibleEdges()) {
+    const p = nodes.get(e.a), q = nodes.get(e.b);
+    if (!p || p.x === undefined || !q || q.x === undefined) continue;
+    const rest = REST[e.kind] ?? 95;
+    const dx = q.x - p.x, dy = q.y - p.y, d = Math.max(1, Math.hypot(dx, dy));
+    const f = (d - rest) * (e.kind === 'link' || e.kind === 'nest' ? .012 : .02) * a, ux = dx / d, uy = dy / d;
+    p.vx += ux * f; p.vy += uy * f; q.vx -= ux * f; q.vy -= uy * f;
+  }
+  for (const n of arr) {
+    if (S.drag?.node === n) { n.vx = n.vy = 0; continue; }
+    n.vx -= n.x * .0016 * a; n.vy -= n.y * .0016 * a;
+    const m = n.kind === 'x' ? 1.5 : n.kind === 'p' && n.type === 'main' ? 1.3 : 1;
+    n.vx = (n.vx / m) * .86; n.vy = (n.vy / m) * .86;
+    const sp = Math.hypot(n.vx, n.vy);
+    if (sp > 14) { n.vx *= 14 / sp; n.vy *= 14 / sp; }
+    n.x += n.vx; n.y += n.vy;
+  }
+  S.alpha = Math.max(.04, S.alpha * .995);   // 不归零: 布局稳定但仍微微呼吸
+}
+
+// ---------------- 视野 ----------------
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  const w = stage.clientWidth, h = stage.clientHeight;
+  if (!w || !h) return;                      // 布局未就绪 (如预览面板刚挂载) 时跳过
+  cv.width = w * dpr; cv.height = h * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+window.addEventListener('resize', resize);
+new ResizeObserver(resize).observe(stage);   // 工具栏换行/面板伸缩都会改 stage 尺寸
+resize();
+const w2s = (x, y) => [x * S.view.k + S.view.x, y * S.view.k + S.view.y];
+const s2w = (x, y) => [(x - S.view.x) / S.view.k, (y - S.view.y) / S.view.k];
+
+/** 把当前可见节点装进视口。力导向以原点为中心, 而原点映射到画布左上角 ——
+ *  不做这步, 大半个图永远在负坐标区被裁掉 (实测: 全屏黑, 数据明明都在)。 */
+function fitView(pad = 70) {
+  const pts = [...nodes.values()].filter((n) => n.x !== undefined);
+  if (!pts.length) return;
+  let x1 = 1e9, y1 = 1e9, x2 = -1e9, y2 = -1e9;
+  for (const n of pts) {
+    x1 = Math.min(x1, n.x); y1 = Math.min(y1, n.y);
+    x2 = Math.max(x2, n.x); y2 = Math.max(y2, n.y);
+  }
+  const w = stage.clientWidth, h = stage.clientHeight;
+  if (!w || !h) return;
+  const k = Math.min(2, Math.max(.1, Math.min((w - pad * 2) / Math.max(80, x2 - x1), (h - pad * 2) / Math.max(80, y2 - y1))));
+  S.view.k = k;
+  S.view.x = (w - (x1 + x2) * k) / 2;
+  S.view.y = (h - (y1 + y2) * k) / 2;
+}
+
+// ---------------- 自诊断 ----------------
+// 画布黑屏事故的教训: "数据在、循环在、没报错"仍然可能全黑 (坐标 NaN / 视野外 / 合成层问题)。
+// 诊断行借道 http.log: fetch 一个故意 404 的路径, index.js 的请求中间件会把整条 URL 记进日志,
+// 服务端零改动就能远程读到页面状态。页面每 60s 发一次, 出错立即发。
+function sendDiag(reason) {
+  try {
+    let nan = 0, x1 = 1e9, y1 = 1e9, x2 = -1e9, y2 = -1e9, tot = 0;
+    for (const n of nodes.values()) {
+      if (n.x === undefined) continue;
+      tot++;
+      if (!isFinite(n.x) || !isFinite(n.y)) nan++;
+      x1 = Math.min(x1, n.x); x2 = Math.max(x2, n.x);
+      y1 = Math.min(y1, n.y); y2 = Math.max(y2, n.y);
+    }
+    let inV = 0;
+    for (const n of nodes.values()) {
+      if (n.x === undefined) continue;
+      const [sx, sy] = w2s(n.x, n.y);
+      if (sx >= 0 && sx <= stage.clientWidth && sy >= 0 && sy <= stage.clientHeight) inV++;
+    }
+    let painted = -1;
+    try {
+      const d = ctx.getImageData(0, 0, cv.width, cv.height).data;
+      painted = 0;
+      for (let i = 3; i < d.length; i += 997) if (d[i] > 0) painted++;
+    } catch { /* 跨域污染时取不到, 忽略 */ }
+    const q = `f=${S.frames | 0} painted=${painted} inView=${inV}/${tot} k=${(+S.view.k).toFixed(2)}`
+      + ` vw=${stage.clientWidth}x${stage.clientHeight} dpr=${window.devicePixelRatio || 1}`
+      + ` nan=${nan} bbox=${isFinite(x1) ? `${x1 | 0}..${x2 | 0},${y1 | 0}..${y2 | 0}` : 'NaN'}`
+      + ` scrub=${S.scrub}/${S.maxOrder} edges=${edges.length} reason=${reason}`;
+    fetch('/__graph_diag?' + encodeURIComponent(q)).catch(() => {});
+    return q;
+  } catch { return ''; }
+}
+window.addEventListener('error', (ev) => sendDiag('window-error:' + (ev.message || '').slice(0, 80)));
+
+// ---------------- 渲染 ----------------
+/** 短标签: 超宽截断 (时间点名可以很长, 如 "夜晚, 深渊暗潮侵袭之时") */
+const clip = (t, n = 14) => (String(t).length > n ? String(t).slice(0, n - 1) + '…' : String(t));
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y); ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r); ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y); ctx.closePath();
+}
+function radiusOf(n, lit) {
+  const k = Math.max(.5, S.view.k);
+  if (n.kind === 'x') return (4.6 + 1.1 * Math.sqrt(n.degree) + (n.confirms ? Math.min(2, n.confirms) : 0)) * Math.max(.6, S.view.k) * (lit ? 1.25 : 1);
+  if (n.kind === 'p' || n.kind === 'l' || n.kind === 'o' || n.kind === 'i' || n.kind === 't')
+    return (7 + 2.2 * Math.sqrt(n.degree)) * k * (n.type === 'main' ? 1.3 : 1) * (lit ? 1.2 : 1);
+  return (6 + 1.7 * Math.sqrt(n.degree)) * k * (lit ? 1.2 : 1);   // 词表节点
+}
+
+/** 聚焦闭包: 焦点 + 一跳; 若一跳里有实例, 把这些实例的其余边也纳入 ("它管的那些事") */
+function focusClosure() {
+  const F = S.focus; if (!F) return null;
+  const keep = new Set([F.key]);
+  for (const e of edges) if (e.a === F.key || e.b === F.key) keep.add(e.a === F.key ? e.b : e.a);
+  const insts = new Set([...keep].filter((k) => nodes.get(k)?.kind === 'x'));
+  if (insts.size) for (const e of edges) if (insts.has(e.a) || insts.has(e.b)) { keep.add(e.a); keep.add(e.b); }
+  const eSet = new Set(edges.filter((e) => keep.has(e.a) && keep.has(e.b)));
+  return { nodes: keep, edges: eSet };
+}
+
+function render() {
+  const W = stage.clientWidth, H = stage.clientHeight;
+  ctx.clearRect(0, 0, W, H);
+  const show = visibleNodeKeys();
+  const hot = new Set();
+  if (S.hover) hot.add(S.hover.key);
+  if (S.selected) hot.add(S.selected.key);
+  for (const e of visibleEdges()) if (hot.has(e.a) || hot.has(e.b)) { hot.add(e.a); hot.add(e.b); }
+
+  const fc = focusClosure();
+  for (const e of visibleEdges()) {
+    const p = nodes.get(e.a), q = nodes.get(e.b);
+    if (!p || p.x === undefined || !q || q.x === undefined) continue;
+    const [x1, y1] = w2s(p.x, p.y), [x2, y2] = w2s(q.x, q.y);
+    const base = EDGE_STYLE[e.kind] || EDGE_STYLE.role;
+    const st = e.kind === 'stance' ? { ...base, color: toneOf(e.stanceType) } : base;
+    const lit = hot.has(e.a) && hot.has(e.b);
+    ctx.globalAlpha = fc ? (fc.edges.has(e) ? 1 : .08) : 1;
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
+    ctx.strokeStyle = lit ? st.color.replace(/[\d.]+\)$/, '0.95)') : st.color;
+    ctx.lineWidth = (st.w + (e.kind === 'stance' ? (e.intensity ?? .5) * 1.6 : 0)) * (lit ? 1.7 : 1);
+    if (st.dash) ctx.setLineDash(st.dash);
+    if (st.arrow) {
+      const ang = Math.atan2(y2 - y1, x2 - x1), r = (q.sr ?? 8) + 4;
+      const ax = x2 - Math.cos(ang) * r, ay = y2 - Math.sin(ang) * r;
+      ctx.moveTo(ax, ay);
+      ctx.lineTo(ax - Math.cos(ang - .42) * 7, ay - Math.sin(ang - .42) * 7);
+      ctx.lineTo(ax - Math.cos(ang + .42) * 7, ay - Math.sin(ang + .42) * 7);
+      ctx.closePath();
+    }
+    ctx.stroke(); ctx.setLineDash([]);
+    // 线上只有一个词 (或立场词+强度): 角色词就是"最基本的语义逻辑", 不必等悬停也能看见
+    const word = e.kind === 'stance' ? `${e.stanceType} ${(e.intensity ?? .5).toFixed(1)}` : e.label;
+    if (word && (lit || S.view.k >= (LABEL_MIN_K[e.kind] ?? 1.2))) {
+      const mx = (x1 + x2) / 2, my = (y1 + y2) / 2 - 4;
+      ctx.font = `${lit ? 11 : 10}px sans-serif`; ctx.textAlign = 'center';
+      const w = ctx.measureText(word).width;
+      ctx.fillStyle = 'rgba(11,15,23,.72)';
+      ctx.fillRect(mx - w / 2 - 3, my - 9, w + 6, 12);
+      ctx.fillStyle = lit ? '#e2e8f0' : (e.kind === 'obs' ? 'rgba(148,163,184,.75)' : 'rgba(203,213,225,.85)');
+      ctx.fillText(word, mx, my);
+    }
+  }
+  ctx.globalAlpha = 1;
+
+  for (const n of nodes.values()) {
+    if (n.x === undefined || !show.has(n.key)) continue;
+    const [x, y] = w2s(n.x, n.y);
+    if (x < -90 || y < -90 || x > W + 90 || y > H + 90) continue;
+    const lit = hot.has(n.key);
+    const r = radiusOf(n, lit);
+    n.sr = r;
+    ctx.globalAlpha = fc ? (fc.nodes.has(n.key) ? 1 : .1) : 1;
+    const fill = TYPE_COLORS[n.type] || '#94a3b8';
+    if (n.kind === 'x') {
+      // 述谓实例: 小菱形 (结构锚点, 别抢视觉权重); 未定局 = 空心
+      const pending = n.status !== 'asserted';
+      ctx.beginPath();
+      ctx.moveTo(x, y - r); ctx.lineTo(x + r, y); ctx.lineTo(x, y + r); ctx.lineTo(x - r, y); ctx.closePath();
+      ctx.fillStyle = pending ? 'rgba(100,116,139,.22)' : 'rgba(148,163,184,.85)';
+      ctx.fill();
+      if (pending || lit) { ctx.strokeStyle = lit ? '#e2e8f0' : 'rgba(148,163,184,.8)'; ctx.lineWidth = 1.4; ctx.stroke(); }
+      if (n.polarity === '-') {    // 极性是实例自身的属性, 画记号而不做成节点
+        ctx.strokeStyle = '#f87171'; ctx.lineWidth = 1.6;
+        ctx.beginPath(); ctx.moveTo(x - r - 3, y - r - 3); ctx.lineTo(x + r + 3, y - r - 3); ctx.stroke();
+      }
+      // 标签 = 谓词 (+ 坐标); 标题这类句子载荷不上画布
+      const on = lit || S.view.k > .68 || (fc && fc.nodes.has(n.key));
+      if (on) {
+        ctx.fillStyle = lit ? '#e5e7eb' : 'rgba(148,163,184,.92)';
+        ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
+        const t = n.predicateUnknown ? '未归一' : n.predicate;
+        ctx.fillText(clip(t, 12), x, y + r + 11);
+        if (S.view.k > 1.35 || lit) {
+          ctx.fillStyle = 'rgba(100,116,139,.9)'; ctx.font = '9px sans-serif';
+          ctx.fillText(n.coordinate, x, y + r + 21);
+        }
+      }
+      continue;
+    }
+    // 词表节点与指称节点: 圆; 真值/情态/角色/谓词画成"标签块"以便一眼看出是词汇而非个体
+    const isWord = n.kind === 'v' || n.kind === 'r' || n.kind === 's' || n.kind === 'm';
+    if (isWord) {
+      const txt = clip(n.name, 12);
+      ctx.font = `${lit ? 11 : 10}px sans-serif`; ctx.textAlign = 'center';
+      const w = ctx.measureText(txt).width + 12, h = 15;
+      n.sr = Math.max(w, h) / 2;
+      roundRect(x - w / 2, y - h / 2, w, h, 4);
+      ctx.fillStyle = lit ? fill : fill + 'cc';
+      ctx.globalAlpha *= (lit ? 1 : .92);
+      ctx.fill();
+      // 待审元素 (词表外新造、还没人工归一的词) 用琥珀虚线框标出来 —— 它是"该整理的地方"
+      const review = n.wstatus === 'needs_review';
+      ctx.strokeStyle = lit ? '#e2e8f0' : review ? '#f59e0b' : 'rgba(11,15,23,.65)';
+      ctx.lineWidth = review && !lit ? 1.5 : 1.2;
+      if (review) ctx.setLineDash([3, 2]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#0b0f17';
+      ctx.fillText(txt, x, y + 3.5);
+      ctx.globalAlpha = 1;
+      continue;
+    }
+    ctx.beginPath(); ctx.arc(x, y, r, 0, 7);
+    ctx.fillStyle = n.kind === 't' ? (lit ? fill : fill + 'd0') : fill;
+    ctx.fill();
+    if (lit || n.type === 'main' || (fc && fc.nodes.has(n.key))) {
+      ctx.strokeStyle = n.type === 'main' ? '#f5a524' : (fc && fc.nodes.has(n.key)) ? '#67e8f9' : '#e2e8f0';
+      ctx.lineWidth = n.type === 'main' ? 2 : 1.4;
+      ctx.stroke();
+    }
+    if (lit || S.view.k > .62 || n.type === 'main' || n.kind === 't' || n.count > 1) {
+      ctx.fillStyle = n.type === 'main' ? '#f5a524' : '#e5e7eb';
+      ctx.font = `${lit ? 12 : 11}px sans-serif`; ctx.textAlign = 'center';
+      ctx.fillText(clip(n.name, 14), x, y + r + 12);
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+function tick(t) {
+  // 循环必须打不死: 渲染出错就把错误亮在状态栏里继续跑 —— 静默黑屏是最坏的失败模式
+  if (!document.hidden && S.data) {
+    try {
+      if (S.playing) stepPlay(t);
+      physics();
+      render();
+      S.frames = (S.frames || 0) + 1;
+    } catch (err) {
+      S.frames = 0;
+      const el = $('status');
+      el.textContent = '渲染出错: ' + err.message;
+      el.style.color = '#f87171';
+      console.error('[graph] render error:', err);
+      sendDiag('render-error:' + err.message.slice(0, 60));
+    }
+  }
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+
+// ---------------- 交互 ----------------
+function pick(mx, my) {
+  let best = null, bd = 1e9;
+  const show = visibleNodeKeys();              // 只命中看得见的节点 (时间轴过滤掉的不再"悬空悬停")
+  for (const n of nodes.values()) {
+    if (n.x === undefined || !show.has(n.key)) continue;
+    const [x, y] = w2s(n.x, n.y);
+    const d = Math.hypot(mx - x, my - y);
+    if (d < (n.sr ?? 10) + 6 && d < bd) { best = n; bd = d; }
+  }
+  return best;
+}
+cv.addEventListener('mousedown', (ev) => {
+  const n = pick(ev.offsetX, ev.offsetY);
+  S.drag = n
+    ? { node: n, moved: false, cx: ev.clientX, cy: ev.clientY }
+    : { pan: true, moved: false, cx: ev.clientX, cy: ev.clientY, vx: S.view.x, vy: S.view.y };
+  cv.classList.add('dragging');
+});
+window.addEventListener('mousemove', (ev) => {
+  if (!S.drag) {
+    const rect = cv.getBoundingClientRect();
+    const n = (ev.target === cv) ? pick(ev.clientX - rect.left, ev.clientY - rect.top) : null;
+    S.hover = n; cv.style.cursor = n ? 'pointer' : 'grab';
+    if (n) {
+      showTip(n);
+      tip.style.left = Math.min(ev.clientX - rect.left + 14, stage.clientWidth - 360) + 'px';
+      tip.style.top = (ev.clientY - rect.top + 14) + 'px';
+    } else tip.style.display = 'none';
+    return;
+  }
+  const moved = Math.hypot(ev.clientX - S.drag.cx, ev.clientY - S.drag.cy) > 2;
+  if (moved) { S.drag.moved = true; S.userMoved = true; }
+  if (S.drag.node) {
+    if (moved) {
+      const rect = cv.getBoundingClientRect();
+      const [wx, wy] = s2w(ev.clientX - rect.left, ev.clientY - rect.top);
+      S.drag.node.x = wx; S.drag.node.y = wy;
+      S.alpha = Math.max(S.alpha, .5);
+    }
+  } else if (moved) {
+    S.view.x = S.drag.vx + (ev.clientX - S.drag.cx);
+    S.view.y = S.drag.vy + (ev.clientY - S.drag.cy);
+  }
+});
+window.addEventListener('mouseup', (ev) => {
+  if (S.drag && !S.drag.moved) {
+    if (S.drag.node) {
+      const n = S.drag.node;
+      S.selected = n; select(n);
+      S.focus = { key: n.key };                 // 单击 = 唤起这条路: 其余淡出
+      buildIndex();
+    } else {                                   // 点空白 = 取消聚焦
+      S.focus = null; S.selected = null; side.style.display = 'none'; buildIndex();
+    }
+  }
+  S.drag = null; cv.classList.remove('dragging');
+});
+cv.addEventListener('wheel', (ev) => {
+  ev.preventDefault();
+  const k2 = Math.min(6, Math.max(.15, S.view.k * (ev.deltaY < 0 ? 1.12 : 1 / 1.12)));
+  const [wx, wy] = s2w(ev.offsetX, ev.offsetY);
+  S.userMoved = true; S.view.k = k2; S.view.x = ev.offsetX - wx * k2; S.view.y = ev.offsetY - wy * k2;
+}, { passive: false });
+$('side-x').addEventListener('click', () => { side.style.display = 'none'; S.selected = null; });
+$('fit').addEventListener('click', () => { S.userMoved = false; fitView(); });
+
+// ---------------- 侧栏: 点谁就看谁, 词表节点看"它管的那些事" ----------------
+const frow = (k, v) => (v ? `<div class="row"><span class="k">${k}</span>${v}</div>` : '');
+const dataRows = (arr, key, id) => arr.filter((r) => r[key] === id);
+const truthLabel = (id) => S.data?.nodes.truths.find((t) => t.id === id)?.label || id;
+const modalLabel = (id) => S.data?.nodes.modalities.find((m) => m.id === id)?.label || id;
+const nameOf = (key) => nodes.get(key)?.name || '?';
+
+function instLink(inst) {
+  if (!inst) return '<span class="k">?</span>';
+  const k = keyOf('x', inst.id);
+  return `<span class="lnk" data-k="${esc(k)}" style="cursor:pointer;color:var(--accent)">`
+    + `⟨${esc(inst.predicate)}⟩ ${esc(inst.coordinate)}</span>`;
+}
+function select(n) {
+  S.selected = n; side.style.display = 'block';
+  const D = S.data;
+  const rows = [];
+  if (n.kind === 'x') {
+    const inst = D.nodes.instances.find((e) => e.id === n.id) || n;
+    rows.push(`<h3>⟨${esc(inst.predicate)}⟩ <span style="color:var(--faint)">${esc(inst.coordinate)}</span></h3>`);
+    rows.push(frow('谓词', esc(inst.predicate) + (inst.verbSurface && inst.verbSurface !== inst.predicate
+      ? ` <span class="k">原文 ${esc(inst.verbSurface)}</span>` : '')));
+    rows.push(frow('真值', esc(truthLabel(inst.status)) + (inst.polarity === '-' ? ' · 否定 ¬' : '')));
+    const holder = dataRows(D.edges.holders, 'instance', inst.id)[0];
+    rows.push(frow('情态', esc(modalLabel(inst.modality)) + (holder ? ` · 持有者 ${esc(nameOf(keyOf('p', holder.entity)))}` : '')));
+    rows.push(frow('世界时间', inst.timeId != null ? esc(inst.timeLabel || '') : '<span class="k">未定时</span>'));
+    const place = D.edges.places.find((p) => p.instance === inst.id);
+    rows.push(frow('地点', place ? esc(nameOf(keyOf('l', place.place))) : ''));
+    const rs = dataRows(D.edges.roles, 'instance', inst.id)
+      .map((r) => `${esc(r.label)} → ${esc(nameOf(keyOf('p', r.entity)))}`);
+    rows.push(frow('角色', rs.join('<br>')));
+    const links = D.edges.links.filter((l) => l.from === inst.id || l.to === inst.id)
+      .map((l) => (l.from === inst.id ? `${esc(l.label)} ` : '') + instLink(D.nodes.instances.find((x) => x.id === (l.from === inst.id ? l.to : l.from))));
+    rows.push(frow('因果', links.join('<br>')));
+    const nest = D.edges.nesting.filter((x) => x.parent === inst.id || x.child === inst.id)
+      .map((x) => `${esc(x.label)} ${instLink(D.nodes.instances.find((y) => y.id === (x.parent === inst.id ? x.child : x.parent)))}`);
+    rows.push(frow('嵌套', nest.join('<br>')));
+    const obs = dataRows(D.edges.observations, 'instance', inst.id)
+      .map((o) => `[${esc(o.aspect)}] ${esc(nameOf(entityKey(o.entityType, o.entityId)))}: ${esc(o.content)}`);
+    rows.push(frow('观察', obs.join('<br>')));
+    // 载荷: 句子只在这里读, 不上画布 (docs/graph-view.md §3 R1)
+    rows.push(frow('标题', esc(inst.title)));
+    if (inst.process) rows.push(frow('过程', esc(inst.process)));
+    if (inst.resultText) rows.push(frow('结果', esc(inst.resultText)));
+    if (inst.confirms) rows.push(frow('重述', `×${inst.confirms + 1}`));
+  } else if (n.kind === 'v' || n.kind === 'r' || n.kind === 's' || n.kind === 'm' || n.kind === 't') {
+    const insts = instancesOfWord(n);
+    rows.push(`<h3>${esc(n.name)}</h3>`);
+    rows.push(frow('层', esc(TYPE_NAMES[n.type] || n.type)));
+    rows.push(frow('复用度', `${insts.length} 个实例引用它`));
+    if (n.parentName) rows.push(frow('上位类', esc(n.parentName)));
+    if (n.kind === 'v' && n.surfaces?.length) rows.push(frow('原文动词', esc(n.surfaces.join('、'))));
+    if (n.aliases?.length) rows.push(frow('同义写法', esc(n.aliases.join('、'))));
+    if (n.full && n.full !== n.name) rows.push(frow('全称', esc(n.full)));
+    if (n.kind === 't') {
+      // 时间点 = 世界内时刻 (身份), 时段 = 它的抽象层 (昼/夜/黄昏), 章节 = 上级时间点
+      rows.push(frow('时段', esc(n.periodName || '—')));
+      const parent = n.parentId != null ? nodes.get(keyOf('t', n.parentId)) : null;
+      if (parent) rows.push(frow('章节', esc(parent.name)));
+      if (n.note) rows.push(frow('原标签', esc(n.note)));
+    }
+    if (n.wstatus === 'needs_review') {
+      rows.push(frow('状态', '<span style="color:#f59e0b">待审 · 词表外的新词</span> '
+        + '<span class="k">人工挂类或归并: node src/cli/vocab.js report / merge</span>'));
+    }
+    rows.push('<div class="row" style="color:var(--faint)">引用它的实例 (单击唤起):</div>');
+    rows.push(insts.map((e) => `<div class="row">${instLink(e)} <span class="k">${esc(clip(e.title, 18))}</span></div>`).join('') || '—');
+  } else {
+    rows.push(`<h3>${esc(n.name)}</h3>`);
+    rows.push(frow('类型', esc(TYPE_NAMES[n.type] || n.type)
+      + (n.aliases.length ? ` · ${esc(n.aliases.join('/'))}` : '')));
+    rows.push(frow('度数', `${n.degree} · 首现刻度 ${n.birth}`));
+    if (n.count) rows.push(frow('复用度', `${n.count} 个实例引用它`));
+    if (n.desc) rows.push(frow('描述', esc(n.desc)));
+    const sts = dataRows(D.edges.stances, 'holderId', n.id).filter((s) => s.holderType === 'person' || s.holderType === 'org')
+      .map((s) => `对 ${esc(nameOf(entityKey(s.targetType, s.targetId)))}: ${esc(s.stanceType)} ${(s.intensity ?? .5).toFixed(1)}`
+        + (s.basis ? ` — ${esc(s.basis)}` : ''));
+    const stsIn = D.edges.stances.filter((s) => s.targetId === n.id && (s.targetType === 'person' || s.targetType === 'org'))
+      .map((s) => `来自 ${esc(nameOf(entityKey(s.holderType, s.holderId)))}: ${esc(s.stanceType)} ${(s.intensity ?? .5).toFixed(1)}`);
+    rows.push(frow('立场', [...sts, ...stsIn].join('<br>')));
+    const obs = D.edges.observations.filter((o) => o.entityId === n.id)
+      .map((o) => `[${esc(o.aspect)}] ${esc(o.content)}`);
+    if (obs.length) rows.push(frow('观察', obs.join('<br>')));
+    const myInsts = instancesOfEntity(n);
+    rows.push('<div class="row" style="color:var(--faint)">经手的实例 (单击唤起):</div>');
+    rows.push(myInsts.map((e) => `<div class="row">${instLink(e)} <span class="k">${esc(clip(e.title, 18))}</span></div>`).join('') || '—');
+  }
+  sideBody.innerHTML = rows.join('');
+}
+const entityKey = (t, id) => keyOf(t === 'person' ? 'p' : t === 'org' ? 'o' : t === 'item' ? 'i' : 'l', id);
+function instancesOfWord(n) {
+  const D = S.data;
+  const pick = (arr, key) => new Set(arr.filter((r) => (Array.isArray(r[key]) ? r[key].includes(n.id) : r[key] === n.id)).map((r) => r.instance));
+  let ids;
+  if (n.kind === 'v') ids = pick(D.edges.predicates, 'predicate');
+  else if (n.kind === 'r') ids = pick(D.edges.roles, 'role');
+  else if (n.kind === 's') ids = pick(D.edges.truths, 'truth');
+  else if (n.kind === 'm') ids = pick(D.edges.modalities, 'modality');
+  else ids = new Set(D.nodes.instances.filter((e) => e.timeId === n.id).map((e) => e.id));
+  return D.nodes.instances.filter((e) => ids.has(e.id));
+}
+function instancesOfEntity(n) {
+  const D = S.data;
+  const ids = new Set();
+  const eType = n.kind === 'p' ? 'person' : n.kind === 'o' ? 'org' : n.kind === 'i' ? 'item' : 'location';
+  for (const r of D.edges.roles) if (eType === 'person' && r.entity === n.id) ids.add(r.instance);
+  for (const h of D.edges.holders) if (eType === 'person' && h.entity === n.id) ids.add(h.instance);
+  for (const p of D.edges.places) if (eType === 'location' && p.place === n.id) ids.add(p.instance);
+  for (const o of D.edges.observations) if (o.entityType === eType && o.entityId === n.id) ids.add(o.instance);
+  for (const s of D.edges.stances) if (s.fromEvent != null
+    && ((s.holderType === eType && s.holderId === n.id) || (s.targetType === eType && s.targetId === n.id))) ids.add(s.fromEvent);
+  return D.nodes.instances.filter((e) => ids.has(e.id));
+}
+
+function showTip(n) {
+  const lines = [];
+  if (n.kind === 'x') {
+    lines.push(`<b>⟨${esc(n.predicate)}⟩</b> <span class="m">${esc(n.coordinate)}`
+      + `${n.confirms ? ` · 重述×${n.confirms + 1}` : ''}</span>`);
+    lines.push(esc(clip(n.title, 30)));
+    lines.push(`<span class="m">${esc([truthLabel(n.truth), n.timeLabel || '未定时', n.polarity === '-' ? '否定' : ''].filter(Boolean).join(' · '))}</span>`);
+  } else if (n.kind === 'v' || n.kind === 'r' || n.kind === 's' || n.kind === 'm' || n.kind === 't') {
+    lines.push(`<b>${esc(n.name)}</b> <span class="m">${esc(TYPE_NAMES[n.type] || n.type)}`
+      + `${n.wstatus === 'needs_review' ? ' · <span style="color:#f59e0b">待审</span>' : ''}</span>`);
+    lines.push(`<span class="m">复用度 ${n.count || n.degree} · 度数 ${n.degree}`
+      + `${n.parentName ? ` · 上位类 ${esc(n.parentName)}` : ''}`
+      + `${n.periodName ? ` · 时段 ${esc(n.periodName)}` : ''}</span>`);
+    if (n.aliases?.length) lines.push(`<span class="m">同义 ${esc(clip(n.aliases.join('/'), 30))}</span>`);
+  } else {
+    lines.push(`<b>${esc(n.name)}</b> <span class="m">${esc(TYPE_NAMES[n.type] || n.type)}${n.aliases.length ? ' · ' + esc(n.aliases.join('/')) : ''}</span>`);
+    lines.push(`<span class="m">度数 ${n.degree} · 首现刻度 ${n.birth}</span>`);
+  }
+  tip.innerHTML = lines.join('<br>'); tip.style.display = 'block';
+}
+sideBody.addEventListener('click', (ev) => {
+  const k = ev.target?.dataset?.k; if (!k) return;
+  const n = nodes.get(k); if (!n) return;
+  S.selected = n; select(n); S.focus = { key: n.key }; buildIndex();
+});
+
+// ---------------- 实例索引 (按刻度) ----------------
+function buildIndex() {
+  const el = $('idx'); if (!S.data) return;
+  el.innerHTML = '<div style="color:var(--faint);padding:2px 6px">述谓实例 (按刻度) — 单击唤起它的通路</div>'
+    + S.data.nodes.instances.map((ev) => {
+      const k = keyOf('x', ev.id);
+      const act = S.focus?.key === k;
+      return `<div class="ix${act ? ' active' : ''}" data-k="${esc(k)}">#${ev.order} ⟨${esc(ev.predicate)}⟩ `
+        + `<span style="color:var(--faint)">${esc(ev.coordinate)} · ${esc(ev.timeLabel || '未定时')} · ${esc(clip(ev.title, 16))}</span></div>`;
+    }).join('');
+}
+
+// ---------------- 控件 ----------------
+function buildChatSelect() {
+  const sel = $('chat');
+  sel.innerHTML = '<option value="">全部聊天</option>' +
+    (S.data.chats || []).map((c) => `<option value="${esc(c.chatId)}">${esc(c.chatId)} (${c.events}事件/${c.memories}记忆)</option>`).join('');
+  sel.value = S.chatId ?? '';
+  sel.onchange = () => { S.chatId = sel.value || null; S.selected = null; S.hover = null; S.focus = null; side.style.display = 'none'; S.userMoved = false; S.alpha = 1; load(); };
+}
+function buildLegend() {
+  const types = new Set(); const tones = new Set(); const seen = new Set(); const chips = [];
+  for (const n of nodes.values()) if (n.kind === 'p' || n.kind === 'l' || n.kind === 'o' || n.kind === 'i') types.add(n.type);
+  for (const e of edges) if (e.kind === 'stance') tones.add(e.stanceType);
+  for (const t of ['main', 'npc', 'mentioned', 'location', 'org', 'item'])
+    if (types.has(t)) chips.push(`<i style="background:${TYPE_COLORS[t]}"></i>${TYPE_NAMES[t]}`);
+  for (const t of tones) { const c = toneOf(t); if (seen.has(c)) continue; seen.add(c); chips.push(`<i style="background:${c}"></i>${esc(t)}`); }
+  chips.push(`<i class="di" style="background:${TYPE_COLORS.instance}"></i>述谓实例 (空心=未定局)`);
+  chips.push(`<i class="sq" style="background:${TYPE_COLORS.predicate}"></i>谓词`);
+  chips.push(`<i class="sq" style="background:${TYPE_COLORS.role}"></i>角色`);
+  chips.push(`<i class="sq" style="background:${TYPE_COLORS.truth}"></i>真值`);
+  chips.push(`<i class="sq" style="background:${TYPE_COLORS.modality}"></i>情态`);
+  chips.push('<i class="sq" style="background:#f59e0b"></i>待审词 (词表外的新词)');
+  chips.push(`<i style="background:${TYPE_COLORS.time}"></i>时间`);
+  $('legend').innerHTML = chips.join('');
+}
+document.querySelectorAll('label.chip[data-layer]').forEach((lab) => {
+  const input = lab.querySelector('input');
+  input.addEventListener('change', () => {
+    const k = lab.dataset.layer;
+    input.checked ? S.layers.add(k) : S.layers.delete(k);
+    lab.classList.toggle('off', !input.checked);
+    S.alpha = Math.max(S.alpha, .4);
+  });
+});
+$('chip-fact').addEventListener('change', (ev) => {
+  S.factOnly = ev.target.checked;
+  S.focus = null;
+  ev.target.closest('label').classList.toggle('off', false);
+  if (S.selected && !nodes.has(S.selected.key)) { S.selected = null; side.style.display = 'none'; }
+  buildIndex();
+});
+$('chip-rolemode').addEventListener('change', (ev) => {
+  S.roleAsNode = ev.target.checked;
+  edges = buildEdges(S.data);                 // 角色词从边上搬进共享节点 (或反过来)
+  computeBirthsAndDegrees();
+  placeNewcomers();
+  S.focus = null; buildIndex();
+  S.alpha = Math.max(S.alpha, .5);
+});
+$('auto').addEventListener('change', (ev) => { S.auto = ev.target.checked; });
+$('scrub').addEventListener('input', (ev) => {
+  S.scrub = Number(ev.target.value); stopPlay(); updateScrubLabel();
+});
+function updateScrubLabel() {
+  const evs = S.data?.nodes.instances ?? [];
+  const cur = evs.find((e) => e.order === S.scrub);
+  $('scrub-label').textContent = S.scrub >= S.maxOrder
+    ? `最新 (${S.maxOrder}/${S.maxOrder})`
+    : `#${S.scrub}${cur ? ` ⟨${cur.predicate}⟩ ${String(cur.title || '').slice(0, 8)}` : ''}`;
+}
+function stepPlay(t) {
+  if (!S.playNext) S.playNext = t;
+  if (t - S.playNext < 420) return;
+  S.playNext = t;
+  S.scrub = S.scrub >= S.maxOrder ? 0 : Math.min(S.maxOrder, S.scrub + 1);
+  $('scrub').value = String(S.scrub); updateScrubLabel();
+  S.alpha = Math.max(S.alpha, .5);
+  if (S.scrub >= S.maxOrder) stopPlay();
+}
+function stopPlay() { S.playing = false; $('play').textContent = '▶ 回放'; }
+$('play').addEventListener('click', () => {
+  S.playing = !S.playing; $('play').textContent = S.playing ? '⏸ 暂停' : '▶ 回放';
+  if (S.playing) { S.scrub = 0; $('scrub').value = '0'; updateScrubLabel(); }
+});
+setInterval(() => { if (S.auto) load(); }, 5000);
+setInterval(() => { if (S.data) sendDiag('periodic'); }, 60000);   // 排障降频: 确认渲染正常后 60s 一报
+setTimeout(() => { if (S.data) sendDiag('first-load'); }, 3000);
+$('idx-btn').addEventListener('click', () => {
+  const el = $('idx');
+  el.style.display = el.style.display === 'block' ? 'none' : 'block';
+});
+$('idx').addEventListener('click', (ev) => {
+  const k = ev.target?.dataset?.k; if (!k) return;
+  const n = nodes.get(k); if (!n) return;
+  S.selected = n; select(n); S.focus = { key: n.key }; buildIndex();
+});
+window.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape') { S.focus = null; S.selected = null; side.style.display = 'none'; buildIndex(); }
+});
+load();
+</script>
+</body>
+</html>

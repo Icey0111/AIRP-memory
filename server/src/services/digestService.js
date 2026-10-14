@@ -10,6 +10,7 @@
 // 预算不足时的取舍: 保新丢旧。与可见窗口相接的最近摘要最关键 (决定"刚才发生了什么");
 // 早期剧情里的稳定设定通常已沉淀到角色画像与 fact 记忆, 丢最早一条不会让它们消失。
 import { estimateTokens } from '../utils/text.js';
+import { formatStamp } from '../utils/time.js';
 import { DIGEST_FORMAT, SUMMARY_POLICY, SUMMARY_MEMORY_TYPE } from '../domain/constants.js';
 
 /** 取本聊天全部生效摘要, 按写入顺序排列 (= 楼层先后, 因为总结只向前推进) */
@@ -27,7 +28,14 @@ export function listChatSummaries(db, chatId) {
   return rows.map((r) => ({ ...r, range: floorRange(r.source_message_ids) }));
 }
 
-/** 从 source_message_ids 里取最小/最大楼层号; 解析不出返回 null */
+/**
+ * 从 source_message_ids 里取最小/最大楼层号; 解析不出返回 null。
+ *
+ * ⚠️ 两种历史写法都要认: 纯数字 `"12"` 与带前缀的楼层标签 `"floor-12"`。
+ * 旧版扩展写的是后者, 而这里曾经只 `Number(x)` —— 结果 `["floor-2","floor-3"]` 全部非整数,
+ * 区间判定恒为 null, **【前情提要】的 `[起-止]` 在真实数据上一直是静默缺失的**
+ * (digest.smoke 的夹层用的是纯数字, 所以测试全绿, 只有真库能暴露)。
+ */
 function floorRange(raw) {
   let ids;
   try {
@@ -36,15 +44,24 @@ function floorRange(raw) {
     return null;
   }
   if (!Array.isArray(ids)) return null;
-  const nums = ids.map((x) => Number(x)).filter((n) => Number.isInteger(n));
+  const nums = ids
+    .map((x) => {
+      const m = /(\d+)\s*$/.exec(String(x));
+      return m ? Number(m[1]) : Number.NaN;
+    })
+    .filter((n) => Number.isInteger(n));
   if (!nums.length) return null;
   return { from: Math.min(...nums), to: Math.max(...nums) };
 }
 
-/** 按 DIGEST_FORMAT 渲染一行; 楼层区间解析不出时退化为纯正文 */
+/** 按 DIGEST_FORMAT 渲染一行。
+ *  V10 严格时间口径: 行首的 {time} 是**精确时间戳** (`2026年10月14日星期三 21:28`),
+ *  取自该条摘要的写入时间; 剧情内标签不进 prompt —— "第三夜"是多久以前, 模型答不出。 */
 function formatLine(row) {
-  if (!row.range) return row.content;
+  const time = formatStamp(row.created_at);
+  if (!row.range) return `[${time}] ${row.content}`;
   return DIGEST_FORMAT.line
+    .replace('{time}', time)
     .replace('{from}', String(row.range.from))
     .replace('{to}', String(row.range.to))
     .replace('{content}', row.content);

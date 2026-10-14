@@ -1,19 +1,44 @@
-# AIRP Memory —— 酒馆记忆系统
+# AIRP Memory —— 角色扮演长期记忆（dsh 路线活跃 · 酒馆前端已冻结）
 
-给 SillyTavern（酒馆）角色扮演用的**长期记忆**扩展，自带一套本地记忆服务。
+给角色扮演用的**长期记忆**系统，自带一套本地记忆服务。
 记忆分三层沉淀（事实/事件/摘要 → 述谓实例语义图 → 属性观察向量 → 关系立场），
 并带一层**命题层**记录"被言及但尚未发生"的内容（承诺/意图/威胁），
 随剧情演化而不"吃书"，遗忘可逆。
 
 - **本地优先**：记忆库是一个 SQLite 文件，服务跑在 `127.0.0.1`，不出网。
-- **前端零语义**：扩展不内置任何枚举、权重、默认值、错误文案，全部运行时从
+- **前端零语义**：界面不内置任何枚举、权重、默认值、错误文案，全部运行时从
   `GET /api/meta` 取；连不上服务就显示"未载入契约"并禁用相关按钮，**不退回本地硬编码**。
 - **静默降级**：注入或抽取失败只记一条 warn，绝不打断你的对话。
 
 > 设计主线（V6）：**存原语与边，其余都是视图** —— 事件是簇、摘要是路径压缩、
 > 通路编号是坐标、待兑现清单是未决命题视图。见 `docs/verb-layer.md`。
+> 语义层（V10）：**语义落成可复用的节点** —— 谓词/题元角色/情态/从句/对齐状态/观察维度/立场类型/时段
+> 八域一律是取值元素（`value_nodes`），实例只存指针，归一到词表在**落库前**完成；
+> 抽象层另有**上位类**（动词→言语/位移…、时段→昼/夜），"所有夜间发生的事"一跳即达。
+> 顺带修好了命题对齐：谓词不成词表时，真假判定一次都不会生效（见 `docs/vocabulary-layer.md` §2.1）。
 
-> 本仓库根目录即为酒馆扩展本体（含 `manifest.json`），因此可以直接用仓库地址在酒馆里安装。
+## 路线状态（重要，动手前先读这一段）
+
+| 路线 | 状态 | 宿主 | 入口 |
+|---|---|---|---|
+| **dsh**（DeepSeek Harness） | **活跃** | 桌面端 App / Web | `启动AIRP模式.bat` |
+| 酒馆（SillyTavern）前端 | **已冻结** 2026-10-14 | TauriTavern / 标准版 | `打开酒馆（含记忆服务）.vbs` |
+
+**"冻结"的含义**（写清楚，免得半年后没人知道什么能碰）：
+
+- 冻结区 = 酒馆扩展本体：`manifest.json` / `index.js` / `settings.html` / `style.css` / `src/`。
+  它们**不再演进**：新功能、新语义、新交互一律只做在 dsh 侧。
+- 冻结区**仍能装能跑**，不是废弃。为了酒馆里还能用，它会继续消费 `/api/meta`——
+  所以后端语义变更时，**仍然要保证这些老端点不破**（`check-static.mjs` / `check-contract.mjs` 是它的守卫）。
+- 只有两种情况允许动冻结区：① 后端契约变更导致它**坏了**（修到能跑为止，不加功能）；
+  ② 明确的移植/回填需求，且当次就更新本段与 `docs/agent-harness.md`。
+- **不属于冻结区**（两条路线共用，可以正常演进）：
+  `server/`（记忆服务）、`db/`（表与迁移）、`docs/`、`skills/`、
+  `dsh/`（AIRP 预设真源）、`AIRP.md`、`check-session.mjs`、
+  `check-e2e-10floor.mjs`、`check-contract.mjs`。
+
+dsh 侧的完整说明见 **`docs/agent-harness.md`**（预设组成、MCP 工具面、双模式隔离、
+迁移到 v9 的原因）。
 
 ---
 
@@ -147,18 +172,28 @@ git clone https://github.com/Icey0111/AIRP-memory <SillyTavern>/public/scripts/e
 写入是四步流水线，**每步独立、失败只跳过该步**：
 
 ```
-对话原文 → 六要素（人物/地点/时间点/事件/因果边）
+对话原文 → 归一（谓词/题元/情态/从句/状态/维度/立场 → 词表元素；词表外的进待审队列）
+        → 述谓实例（谁—动词—谁 + 时间 / 地点 / 因果边 / 从句）
         → 属性观察（向量化，同维度相似时自动建立覆盖链，防止"吃书"）
         → 关系立场（有向、带强度，可演化）
         → 画像重归纳（由当前生效的观察块归纳出常驻画像）
 ```
+
+> 归一那一层是 **V10** 加的：语义不再是随手写的自由字符串，而是指向同一张取值元素表的指针。
+> 词表外的词**不丢弃**，进待审队列等人工归并（`node server/src/cli/vocab.js report` 可看）；
+> 归并不可逆，所以它只给工具入口，不给自动路径。
 
 长对话另有**总结**这一路（与前四步独立）：未总结正文累计到 **10 层楼**（默认，用户消息与角色消息各占一层）时，
 把它压成一条 `type=summary` 的记忆，并把已被覆盖的正文用酒馆原生的 `/hide` 隐藏 ——
 隐藏只是移出 prompt，**不删除、随时可放回**。触发楼层数、单批安全阀、摘要长度上限、保留楼层数全部由
 `/api/meta` 下发，前端不写死。之所以按楼层而不按 token，见 [`docs/summarization.md` §2](docs/summarization.md)。
 
-注入进 prompt 的内容因此是四段：**角色画像 → 前情提要 → 相关记忆 → 相关细节**。
+注入进 prompt 的内容因此是五段：**当前时间 → 角色画像 → 前情提要 → 相关记忆 → 相关细节**。
+第一段【当前时间】是 V10 加的时间锚，**精确到分**（`2026年10月14日星期三 21:49`）：
+基准是**最近一条记录的写入时间**（故事接着上一幕走，隔几天再打开不会让剧情凭空跳几天），
+而且**时间位置一律只放精确时间戳**——不写"约/推断"，也不把 `夜里`/`第三夜`/`未定时` 这类
+剧情内标签放进 prompt（它们仍在库里与图页面上）。见
+[`docs/injection-tables.md` §3.0](docs/injection-tables.md)。
 第二段【前情提要】是按楼层顺序拼起来的摘要链 —— 它**不参与相似度检索**：正文既然已经被隐藏，
 摘要就是那段剧情唯一的载体，靠相似度去碰运气只会让它在关键词不命中时整段消失。
 它走独立预算（默认 2000 token），与检索预算互不挤占。详见
@@ -169,34 +204,44 @@ git clone https://github.com/Icey0111/AIRP-memory <SillyTavern>/public/scripts/e
 ## 目录结构
 
 ```
-AIRP-memory/                  酒馆扩展本体（仓库根 = 扩展根）
-├── manifest.json             扩展清单，酒馆读它来加载
-├── index.js                  入口：装配模块、挂载面板、绑定宿主事件
-├── settings.html             设置面板模板
-├── style.css                 面板样式（复用酒馆主题变量）
-├── src/
+AIRP-memory/                  【冻结区】酒馆扩展本体（仓库根 = 扩展根）
+├── manifest.json             ⚠️ 扩展清单，酒馆读它来加载（位置不能动）
+├── index.js                  ⚠️ 入口：装配模块、挂载面板、绑定宿主事件
+├── settings.html             ⚠️ 设置面板模板
+├── style.css                 ⚠️ 面板样式（复用酒馆主题变量）
+├── src/                      ⚠️ 前端模块（下面每一项都属冻结区）
 │   ├── settings.js           前端偏好 + 服务地址引导常量（唯一允许存在的本地配置）
 │   ├── api.js                HTTP 客户端（不含任何后端语义）
 │   ├── meta.js               /api/meta 的本地镜像 —— 前端一切的语义来源
 │   ├── session.js            chatId / characterId 解析、对话区间收集、隐藏楼层、per-chat 状态
 │   ├── injector.js           生成前注入闭环
-│   ├── extractor.js          写入闭环（四个抽取端点，逐步静默降级）
+│   ├── extractor.js          写入闭环
 │   ├── summarizer.js         总结闭环（累计楼层 → 压缩 → 隐藏已总结正文）
 │   ├── ui.js                 设置面板渲染与绑定
 │   ├── bus.js / log.js       事件总线、日志
-├── check-static.mjs          静态一致性检查（不需要酒馆）
-├── check-contract.mjs        契约一致性检查（对着真实服务跑）
-├── make-panel-preview.mjs    生成面板离线预览页（看排版，不需要酒馆）
 │
-├── server/                   本地记忆服务（Node + Express + better-sqlite3）
+├── server/                   【活跃】本地记忆服务（Node + Express + better-sqlite3）
 │   ├── src/api/              HTTP 层：routes / meta 契约端点 / cors
-│   ├── src/services/         业务层：写入、抽取、检索、画像、立场、总结、前情提要、遗忘
-│   ├── src/domain/           constants.js —— 全项目唯一语义源
-│   ├── test/                 七套冒烟测试
+│   ├── src/services/         业务层：写入、抽取、检索、画像、立场、总结、前情提要、遗忘、**词表归一**
+│   ├── src/domain/           constants.js —— 全项目唯一语义源（含 V10 词表：规范词/别名/谓词上位类）
+│   ├── src/cli/              运维工具：migrate / merge-mains / **vocab（复用度·待审队列·归并）**
+│   ├── public/graph.html     记忆网络可视化窗口（零依赖单文件，数据走 /api/graph）
+│   ├── mcp/                  【活跃】MCP stdio 适配器（dsh 侧的工具面）
+│   ├── test/                 23 套冒烟测试（内存库，不污染本地数据）
 │   └── config.default.json   配置模板
 │
-├── db/                       表结构与迁移（schema.sql + migrations/001~004）
-└── docs/                     设计与接口文档
+├── db/                       表结构与迁移（schema.sql + migrations/001~009，当前 v10）
+├── dsh/                      【活跃】AIRP 预设真源 + profile 同步脚本
+├── skills/airp-memory/       【活跃】记忆纪律手册（agent 按需加载）
+├── AIRP.md                   【活跃】记忆纪律唯一真源 —— 被 sync-profiles 整份内联进预设的
+│                             persona（system prompt 常驻），因此**必须保持短**
+├── docs/                     设计与接口文档（dsh 路线见 agent-harness.md）
+│
+├── check-static.mjs          冻结守卫：HTML 的 id ↔ JS 选择器 ↔ 默认设置字段是否对得上
+├── check-contract.mjs        契约一致性检查（对着真实服务跑，两条路线共用）
+├── check-session.mjs         会话体检：给个 chatId 看"这轮织进去了什么"（dsh 侧用）
+├── check-e2e-10floor.mjs     长对话总结闭环 E2E（对着真实服务跑）
+└── make-panel-preview.mjs    生成面板离线预览页（冻结区辅助工具）
 ```
 
 ---
@@ -229,20 +274,28 @@ GET /api/meta                         ← 前后端唯一契约
 ## 开发校验
 
 ```bash
-# 后端（七套冒烟测试，用内存库，不污染本地数据）
+# 后端（18 套冒烟测试，用内存库，不污染本地数据）
 cd server && npm test
 
-# 前端静态一致性：HTML 的 id ↔ JS 选择器 ↔ 默认设置字段是否对得上（不需要酒馆）
+# 冻结守卫：HTML 的 id ↔ JS 选择器 ↔ 默认设置字段是否对得上（不需要酒馆）
 node check-static.mjs
 
-# 前端契约一致性：先启动后端，再跑
+# 契约一致性：先启动后端，再跑（两条路线共用）
 node check-contract.mjs [baseUrl]        # 默认 http://127.0.0.1:7780
+
+# 会话体检：给个 chatId，看"这一轮到底织进去了什么"（dsh 侧验证"每轮编织"质量）
+node check-session.mjs "<chatId>" [--context "<查询词>"]
 ```
+
+> **改了后端语义就跑 `check-contract.mjs`**：冻结区永远在酒馆里活着，
+> 契约一变它就可能坏——而它坏了没人会立刻发现（冻结区没有人在天天用）。
 
 ## 文档
 
 | 文档 | 内容 |
 |---|---|
+| [`docs/vocabulary-layer.md`](docs/vocabulary-layer.md) | **V10 词表层**：七个语义域落成取值元素、归一的两半（机械 + 待审队列）、谓词上位类、真假判定为什么需要词表 |
+| [`docs/graph-view.md`](docs/graph-view.md) | 记忆网络图式：节点是词汇、边是角色、线上零句子（可视化窗口的契约与读法） |
 | [`docs/api.md`](docs/api.md) | HTTP 契约全量说明；§12 是 `GET /api/meta` 契约描述，§13 是 `POST /api/summarize` |
 | [`docs/summarization.md`](docs/summarization.md) | 长对话怎么总结：多少层一次、**为什么不用 token**、隐藏正文的机制与取舍、**摘要如何回到 prompt（【前情提要】, §5）** |
 | [`docs/frontend-v0.md`](docs/frontend-v0.md) | 扩展的安装、设置项、注入/写入/总结时序、id 口径 |

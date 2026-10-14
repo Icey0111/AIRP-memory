@@ -7,7 +7,8 @@
 //   语义 (标题/行数上限/预算/立场显示规则) 一律取自 domain/constants.js 的 INJECTION_TABLES,
 //   本文件不出现任何可被前端感知的字面量。
 import { INJECTION_TABLES, VERB_LAYER } from '../domain/constants.js';
-import { estimateTokens } from '../utils/text.js';
+import { estimateTokens, now } from '../utils/text.js';
+import { formatStamp } from '../utils/time.js';
 import { renderTable, createFirstOccurrenceTracker, displayWidth, truncateToWidth } from './tableRender.ts';
 import { getProfile } from './profileService.js';
 import { chatStances } from './stanceService.js';
@@ -15,6 +16,45 @@ import { chatTimeline, keyEntities, chatPending } from './graphService.js';
 
 const T = INJECTION_TABLES;
 const TL = T.timeline;
+
+/**
+ * 时间锚 (V10): 上下文里那行"现在是几点"。
+ *
+ * 基准 = **最近一条记忆/实例/观察/立场的写入时间**, 而不是服务端当前时间 ——
+ * 故事的时间接着上一幕走, 隔几天再打开不该让剧情凭空跳几天。
+ * 库里一条记录都没有 (全新聊天) 才退回服务端当前时间。
+ *
+ * **只输出精确时间戳, 不写"约/推断"这类模糊措辞** —— 基准来源只以 `inferred` 字段上报
+ * (给面板与诊断看), 不进 prompt: 模型看到的就是一个确定的时间。
+ *
+ * @returns {{at:number, inferred:boolean, text:string}} at 是 Unix 秒
+ */
+export function buildClockAnchor(db, { chatId = null } = {}) {
+  const scope = chatId ? 'AND chat_id = @chatId' : '';
+  const row = db.prepare(`
+    SELECT MAX(ts) AS ts FROM (
+      SELECT created_at AS ts FROM memories         WHERE is_active = 1 ${scope}
+      UNION ALL
+      SELECT created_at AS ts FROM events           WHERE is_active = 1 ${scope}
+      UNION ALL
+      SELECT created_at AS ts FROM attribute_chunks WHERE is_active = 1 ${scope}
+      UNION ALL
+      SELECT created_at AS ts FROM stances          WHERE is_active = 1 ${scope}
+    )`).get({ chatId });
+  if (row?.ts != null) {
+    return { at: row.ts, inferred: true, text: `${T.headers.clock}${formatStamp(row.ts)}` };
+  }
+  const at = now();
+  return { at, inferred: false, text: `${T.headers.clock}${formatStamp(at)}` };
+}
+
+/**
+ * 逐行的时间位置: 一条记录的**精确**时间戳 (`yyyy年MM月DD日星期W HH:mm`)。
+ * 严格口径: 没有前缀、没有"约"、没有剧情标签 —— 时间位置只放精确时间。
+ */
+export function timeStamp(ts) {
+  return formatStamp(ts);
+}
 
 /** 强度三档: 避免把 0.57 这种连续噪声数字灌给模型 (§3.2) */
 export function intensityLabel(v, bands = T.intensityBands, labels = T.intensityLabels) {
@@ -336,15 +376,17 @@ export function buildPendingSection(db, { chatId, maxTokens = T.budgets.pending,
   };
 }
 
-/** 时间节点锚点: label #seq; 章节只在切换时出现一次 (§3.4) */
-export function timeAnchor(ev, prevChapterId) {
-  if (ev.timeId == null) return TL.untimedLabel;
-  const seq = ev.timeSeq == null ? '' : `${TL.seqMark}${ev.timeSeq}`;
-  const label = `${ev.timeLabel ?? ''}${seq ? ` ${seq}` : ''}`.trim();
-  const chapter = ev.chapterLabel && ev.chapterId !== prevChapterId
-    ? `${ev.chapterLabel}${TL.chapterSep}`
-    : '';
-  return `${chapter}${label}`;
+/**
+ * 时间节点锚点 (V10 严格口径): **只放精确时间戳**。
+ *
+ * 旧口径是 `第三章 / 第三夜, 暴雨 #7` 那种剧情标签锚点; 那些都是模糊时间 ——
+ * "第三夜"是多久以前? 模型答不出。现在锚点就是那一刻的绝对时间
+ * (时间点自身的写入时间; 无时间点的事件用它自己的写入时间)。
+ * 剧情标签与章节层级仍在库里 (time_points.label / parent_id) 与图页面上, 只是不进 prompt。
+ * 同一节点的后续行仍由调用方按 timeId 判重留空 (分组语义不变)。
+ */
+export function timeAnchor(ev) {
+  return timeStamp(ev?.timeCreatedAt ?? ev?.eventCreatedAt);
 }
 
 /** 因果标注: 同一列压三类有向边, 每条边只渲染一次 (§3.4) */
@@ -377,12 +419,10 @@ export function buildTimelineTable(db, {
 } = {}) {
   const list = events ?? chatTimeline(db, { chatId, limit });
   const rows = [];
-  let prevChapterId = null;
   let prevTimeId = null;
   for (const ev of list) {
-    const anchor = timeAnchor(ev, prevChapterId);
+    const anchor = timeAnchor(ev);
     const sameNode = ev.timeId != null && ev.timeId === prevTimeId;
-    prevChapterId = ev.chapterId ?? null;
     prevTimeId = ev.timeId ?? null;
     const participants = ev.participants
       .map((p) => entityCell(p.name, { tracker: ctx?.tracker, sketch: sketches.get(p.name), role: p.role }))
@@ -402,7 +442,7 @@ export function buildTimelineTable(db, {
     format: T.format.resident,
     cellMaxWidth: T.limits.cellMaxWidth,
     columns: [
-      { key: 'time', title: '时间节点' },
+      { key: 'time', title: T.timeColumnTitle },
       { key: 'event', title: '事件' },
       { key: 'participants', title: '参与者' },
       { key: 'location', title: '地点' },

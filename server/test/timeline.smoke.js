@@ -123,22 +123,22 @@ const ctxA = createInjectionContext();
 const tlTable = buildTimelineTable(db, { chatId: CHAT, ctx: ctxA });
 const lines = tlTable.text.split('\n');
 check('段落标题与常量同源', lines[0] === T.headers.timeline, lines[0]);
-check('表头五列: 时间节点 / 事件 / 参与者 / 地点 / 因果标注',
-  lines[1].trim().replace(/\s+/g, ' ') === '时间节点 事件 参与者 地点 因果标注', lines[1]);
+check('表头五列: 时间 / 事件 / 参与者 / 地点 / 因果标注',
+  lines[1].trim().replace(/\s+/g, ' ') === '时间 事件 参与者 地点 因果标注', lines[1]);
 // 按"事件列"取行 —— 不能只做 includes(标题): 因果列里也会出现别的事件标题
 const rowOf = (title) => lines.slice(3)
   .find((l) => (l.split(/ {2,}/)[1] ?? '').trim().startsWith(title)) ?? '';
-check('首行带章节前缀 (章节切换处出现一次)',
-  rowOf('酒馆初遇').startsWith('第三章') && rowOf('酒馆初遇').includes('#7'),
+const STAMP = /\d{4}年\d{2}月\d{2}日星期. \d{2}:\d{2}/;
+check('时间列是精确时间戳 (不是"第三夜/#8"这类剧情标签)',
+  STAMP.test(rowOf('酒馆初遇')) && !rowOf('酒馆初遇').includes('#7'),
   JSON.stringify(rowOf('酒馆初遇')));
-check('同一时间节点的第二个事件: 时间列留空, 且不再重复章节/时间描述',
+check('同一时间节点的第二个事件: 时间列留空 (同一节点只描述一次)',
   // 该行以列宽等长的空白开头 (时间列留空), 后续列照常对齐
-  rowOf('卷宗失窃').startsWith(' ') && !rowOf('卷宗失窃').includes('暴雨'),
+  rowOf('卷宗失窃').startsWith(' ') && !STAMP.test(rowOf('卷宗失窃')),
   JSON.stringify(rowOf('卷宗失窃')));
-check('切换时间节点后锚点重新出现',
-  rowOf('两人对质').includes('第四日 #8'), JSON.stringify(rowOf('两人对质')));
-check('无时间节点的事件锚点用占位符',
-  rowOf('夜市相遇').includes(TL.untimedLabel), JSON.stringify(rowOf('夜市相遇')));
+check('切换时间节点后时间戳重新出现', STAMP.test(rowOf('两人对质')), JSON.stringify(rowOf('两人对质')));
+check('无时间节点的事件也放自己的精确时间戳 (不再有"未定时"占位)',
+  STAMP.test(rowOf('夜市相遇')), JSON.stringify(rowOf('夜市相遇')));
 check('事件列带事件性注记 (result_text 优先), 括在常量规定的括号里',
   rowOf('酒馆初遇').includes(`${TL.notePrefix}两人交换了假名${TL.noteSuffix}`), JSON.stringify(rowOf('酒馆初遇')));
 check('无 result/process 的事件不打注记', !rowOf('夜市相遇').includes(TL.notePrefix), JSON.stringify(rowOf('夜市相遇')));
@@ -162,9 +162,11 @@ check('行数上限: 截到 limit 行, total 报未截前的真实条数', (() =
 })(), 'limit 在取数阶段生效 (最近 N 个)');
 
 // 纯格式化函数
-check('timeAnchor: 无 time_id 返回占位符', timeAnchor({ timeId: null }) === TL.untimedLabel);
-check('时间节点 seq 缺失时不打 # 号',
-  timeAnchor({ timeId: 1, timeLabel: '某日', timeSeq: null }) === '某日');
+check('timeAnchor: 有写入时间就返回精确时间戳', STAMP.test(timeAnchor({ timeId: 1, timeCreatedAt: 1791985754 })));
+check('timeAnchor: 两者都没有时返回空串 (不留"未定时"这类模糊占位)',
+  timeAnchor({ timeId: null }) === '' && timeAnchor({}) === '');
+check('timeAnchor: 无时间点的事件退回自己的写入时间',
+  timeAnchor({ timeId: null, eventCreatedAt: 1791985754 }) === timeAnchor({ timeCreatedAt: 1791985754 }));
 check('eventNote: result_text 优先于 process',
   eventNote({ resultText: '结果', process: '经过' }) === `${TL.notePrefix}结果${TL.noteSuffix}`);
 check('eventNote: 两者都空返回空串', eventNote({}) === '');
@@ -263,7 +265,7 @@ check('表格化形态下 section 顺序: 画像 → 立场 → 关键实体 →
   })(),
   ['角色画像', '关系立场', '关键实体', '前情提要', '事件时间线', '相关记忆', '相关细节'].map((l) => `${l}:${ctxTables.text.indexOf(`【${l}】`)}`).join(' '));
 check('检索段行化为 markdown 管道行 (不对齐、无分隔行)',
-  /\| 类型 \| 剧情时间 \| 内容 \| 楼层 \|/.test(ctxTables.text)
+  /\| 类型 \| 时间 \| 内容 \| 楼层 \|/.test(ctxTables.text)
   && !/\|\s*-{3,}/.test(ctxTables.text),
   ctxTables.text.split('\n').filter((l) => l.startsWith('|')).join(' / '));
 check('相关细节段有实体名/维度/观察三列',

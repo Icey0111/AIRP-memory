@@ -49,13 +49,28 @@ const parseJson = parseJsonLoose;
 export async function extractAttributes(db, { llm, embed, chatId, text, sourceMessageIds = [] }) {
   const raw = await llm.chat({ system: EXTRACT_SYSTEM, user: text });
   const data = parseJson(raw);
-  const observations = (data.observations ?? []).filter((o) => o?.entity_name && o?.aspect && o?.content);
-  if (observations.length === 0) return { chunks: [], skipped: 0 };
+  return await persistObservations(db, { embed, chatId, observations: data.observations ?? [], sourceMessageIds });
+}
+
+/**
+ * 属性观察的落库段 (与 LLM 调用分离)。
+ *
+ * 之所以拆出来: 组合抽取 (mergedExtraction) 要让"事件/属性/立场"来自**同一次** LLM 输出,
+ * 那么落库必须能单独复用 —— 否则一次调用省下的往返又会在落库层被复制一遍。
+ *
+ * @param {Array} observations 原始观察项 (含 entity_type/entity_name/aspect/content/event?)
+ * @param {string|null} eventLabel 观察项引用的实例 label (由合并输出提供, 用于填事件锚点)
+ */
+export async function persistObservations(db, {
+  embed, chatId, observations = [], sourceMessageIds = [], labels = null,
+}) {
+  const items = observations.filter((o) => o?.entity_name && o?.aspect && o?.content);
+  if (items.length === 0) return { chunks: [], skipped: 0 };
 
   // 1) 实体解析 (只支持 CHUNKABLE_ENTITY_TYPES, 其余类型跳过并计数)
   const resolved = [];
   let skipped = 0;
-  for (const o of observations) {
+  for (const o of items) {
     if (!CHUNKABLE.has(o.entity_type)) {
       skipped++;
       continue;
@@ -66,8 +81,8 @@ export async function extractAttributes(db, { llm, embed, chatId, text, sourceMe
     resolved.push({ ...o, entityId: entity.id, entityName: entity.name });
   }
 
-  // 2) 批量 embedding
-  const vecs = await embed.embed(resolved.map((o) => o.content));
+  // 2) 批量 embedding (调用方保证 embed 可用; 不可用时不进本函数)
+  const vecs = embed ? await embed.embed(resolved.map((o) => o.content)) : resolved.map(() => null);
 
   // 3) 槽位判定 + 落库 (事务)
   const results = [];
@@ -77,8 +92,10 @@ export async function extractAttributes(db, { llm, embed, chatId, text, sourceMe
       const r = recordObservation(db, {
         entityType: o.entity_type, entityId: o.entityId,
         aspect: o.aspect, content: o.content,
-        embeddingVec: vecs[i], embeddingModel: embed.model,
+        embeddingVec: vecs[i], embeddingModel: embed?.model ?? null,
         sourceMessageIds, chatId, importance: o.importance ?? CHUNK_DEFAULTS.importance,
+        // 跨层锚点: 这条观察是被哪个事件触发的 (合并抽取时由输出的 event label 解析而来)
+        validFromEventId: eventAnchor(o, labels),
       });
       results.push({
         id: r.id, entityType: o.entity_type, entityName: o.entityName,
@@ -88,12 +105,20 @@ export async function extractAttributes(db, { llm, embed, chatId, text, sourceMe
         confirms: r.confirms,
         supersedes: r.supersedes,
         similarity: r.similarity,
+        eventId: eventAnchor(o, labels),
       });
     }
   });
   insertAll();
 
   return { chunks: results, skipped };
+}
+
+/** 观察项声明的 event label → 事件 id (拿不到就留空, 绝不猜) */
+function eventAnchor(o, labels) {
+  const label = String(o?.event ?? o?.event_label ?? '').trim();
+  if (!label || !labels) return null;
+  return labels[label] ?? null;
 }
 
 // ---------- 画像重归纳: 当前生效观察块 -> character_profiles ----------

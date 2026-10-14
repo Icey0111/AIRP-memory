@@ -139,7 +139,8 @@ const r1 = await extractStances(db, { llm: llmStance, chatId: 'chat001', text: '
 check('抽取落库 2 条', r1.stances.length === 2, JSON.stringify(r1.stances.map((s) => s.stanceType)));
 check('自指立场被跳过', r1.skipped === 1);
 check('org 对象正确归并', r1.stances[1].target.name === '银手佣兵团');
-const dbStance = db.prepare("SELECT * FROM stances WHERE stance_type='敌对'").get();
+// V10: 立场类型同样先归一 —— '敌对' 是 '敌视' 的别名, 槽位判等与存库都用规范词
+const dbStance = db.prepare("SELECT * FROM stances WHERE stance_type='敌视'").get();
 check('二阶属性落库 (displayed/is_public/target_aware)',
   dbStance.displayed_type === '戒备' && dbStance.is_public === 0 && dbStance.target_aware === 0);
 

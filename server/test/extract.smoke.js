@@ -175,12 +175,31 @@ const sel = db.prepare("SELECT * FROM people WHERE name='塞拉菲娜'").get();
 check('锚定后的卡名别名落库 (模型做对时管线不破坏)',
   JSON.parse(sel.aliases).includes('Seraphina'), `实际 ${sel.aliases}`);
 check('锚定不产生第二个人物行', db.prepare("SELECT COUNT(*) n FROM people WHERE name='塞拉菲娜'").get().n === 1);
-const you = db.prepare("SELECT * FROM people WHERE name='你'").get();
-check('用户强制 main 一等节点 (模型标了 npc, 兜底改回)',
-  you.person_type === 'main', `实际 ${you.person_type}`);
-check('回传行带别名/类型 (前端 derive 依赖这两个字段匹配)',
+// main 唯一不变量 (V9 之后): 本文件第一节已建过 main '主角', 所以这次的用户节点
+// ('你', 模型标成 npc) **不该自立门户**, 而应并入既有 main 并成为它的别名。
+// 旧断言(UPDATE person_type='main')会造出第二个 main —— 正是实测踩到的分裂问题。
+const mains = db.prepare("SELECT id, name, aliases FROM people WHERE person_type = 'main' AND is_active = 1").all();
+check('用户本人只有一个 main 节点 (不因换了称呼而分裂)', mains.length === 1,
+  JSON.stringify(db.prepare("SELECT id,name,person_type,is_active FROM people").all()));
+check('本次的用户称呼并入既有 main 的别名',
+  JSON.parse(mains[0].aliases).includes('你'), JSON.stringify(mains[0]));
+check('回传行给的是归并后的 canonical 节点 (前端 derive 据此匹配)',
   JSON.parse(r3.people.find((p) => p.name === '塞拉菲娜').aliases).includes('Seraphina')
-  && r3.people.find((p) => p.name === '你').person_type === 'main');
+  && r3.people.some((p) => p.name === mains[0].name && p.person_type === 'main'));
+
+// 反过来: 库里还没有 main 时, 模型标错 (npc) 必须被兜底提权
+{
+  const freshDb = new Database(':memory:');
+  freshDb.pragma('foreign_keys = ON');
+  migrate(freshDb, path.join(projectRoot, 'db'), () => {});
+  const rFr = await extractInstances(freshDb, anchorLlm, {
+    chatId: 'chat-fresh', text: '(新库)', userName: '你',
+  });
+  const promoted = freshDb.prepare("SELECT * FROM people WHERE name='你'").get();
+  check('没有既有 main 时: 模型标 npc 的用户照旧被提权为 main',
+    promoted?.person_type === 'main' && rFr.people.find((p) => p.name === '你').person_type === 'main',
+    JSON.stringify(promoted));
+}
 
 // 用户名无命中时不猜不建: 只跳过锚定, 不影响抽取本身
 const beforePeople = db.prepare('SELECT COUNT(*) n FROM people').get().n;
@@ -194,8 +213,11 @@ check('用户名无命中: 抽取照常返回', r4.ok === true);
 const r5 = await extractInstances(db, anchorLlm, {
   chatId: 'chat004', text: '(再次提到你)', userName: '你',
 });
-const youAgain = db.prepare("SELECT * FROM people WHERE name='你'").get();
-check('person_type 保持 main 不回退', youAgain.person_type === 'main');
+// (同名节点已并入 canonical main, 所以这里看的是"main 仍唯一且称谓仍是它的别名")
+const mainsAgain = db.prepare("SELECT id, aliases FROM people WHERE person_type='main' AND is_active=1").all();
+check('再次提到用户: main 不回退、不重复写',
+  mainsAgain.length === 1 && JSON.parse(mainsAgain[0].aliases).includes('你'),
+  JSON.stringify(mainsAgain));
 
 console.log('\n--- parseJsonLoose 截断修复 (真实事故: 2048 输出上限掐断长批次, JSON 整步解析失败) ---');
 const repaired = parseJsonLoose(MOCK_LLM_JSON.slice(0, 1300));  // 掐断在数组中间
